@@ -1,0 +1,5 @@
+@import "tailwindcss";
+
+/* App-wide tweaks */
+html, body, #root { height: 100%; }
+* { min-width: 0; }
