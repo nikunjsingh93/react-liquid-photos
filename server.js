@@ -10,6 +10,7 @@ import chokidar from 'chokidar'
 import Database from 'better-sqlite3'
 import sharp from 'sharp'
 import mime from 'mime-types'
+import archiver from 'archiver'
 
 /* ---------- config ---------- */
 const ROOT = process.cwd()
@@ -121,7 +122,6 @@ async function ensureThumb(absPath) {
 
 /* ---------- tree ---------- */
 function buildTree() {
-  // Build nodes for every folder path we know
   const rows = db.prepare(`SELECT DISTINCT folder FROM images`).all()
   const root = { name: path.basename(PHOTOS_ROOT) || '/', path: '', count: 0, children: [] }
   const map = new Map([['', root]])
@@ -141,7 +141,6 @@ function buildTree() {
     }
   }
 
-  // Counts via prefix range (same as /api/photos)
   const prefixCount = db.prepare(`SELECT COUNT(*) as c FROM images WHERE folder >= ? AND folder < ?`)
   const fillCounts = (node) => {
     const lower = node.path
@@ -151,7 +150,6 @@ function buildTree() {
   }
   fillCounts(root)
 
-  // Sort children
   const sortRec = (n) => { n.children.sort((a,b)=>a.name.localeCompare(b.name)); n.children.forEach(sortRec) }
   sortRec(root)
   return root
@@ -180,22 +178,22 @@ chokidar.watch(PHOTOS_ROOT, { ignoreInitial: true, depth: 99 })
 /* ---------- api ---------- */
 const app = express()
 app.use(cors())
-app.use(express.json())
+app.use(express.json({ limit: '5mb' })) // larger body for many ids
 
 app.get('/api/tree', (req, res) => {
   try { res.json(buildTree()) } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
-// Prefix-range query (no LIKE). Handles subfolders and avoids wildcard issues with _ and %
+// Prefix-range query (no LIKE)
 app.get('/api/photos', (req, res) => {
-  const folder = (req.query.folder || '').toString()        // '' => All Media
+  const folder = (req.query.folder || '').toString()
   const q = (req.query.q || '').toString().trim()
   const page = Math.max(1, parseInt(req.query.page || '1', 10))
   const pageSize = Math.max(1, Math.min(500, parseInt(req.query.pageSize || '200', 10)))
   const offset = (page - 1) * pageSize
 
   const lower = folder
-  const upper = folder + '\uFFFF' // all strings starting with `folder`
+  const upper = folder + '\uFFFF'
 
   try {
     let rows = []
@@ -247,8 +245,8 @@ app.get('/api/photos', (req, res) => {
   }
 })
 
-// On-demand metadata + EXIF (lazy exifr import)
-const metaCache = new Map() // id -> meta
+// Metadata + EXIF
+const metaCache = new Map()
 app.get('/api/meta/:id', async (req, res) => {
   const id = Number(req.params.id)
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'bad id' })
@@ -273,7 +271,6 @@ app.get('/api/meta/:id', async (req, res) => {
       exif: null,
     }
 
-    // Try to parse EXIF (optional)
     try {
       const { default: exifr } = await import('exifr').catch(() => ({ default: null }))
       if (exifr) {
@@ -303,6 +300,51 @@ app.get('/api/meta/:id', async (req, res) => {
   }
 })
 
+// Batch ZIP download (robust: chunks, partial ok)
+app.post('/download/batch', async (req, res) => {
+  console.log('[ZIP] Route hit! Method:', req.method, 'URL:', req.originalUrl)
+  console.log('[ZIP] Request received:', req.body, 'Content-Type:', req.get('Content-Type'))
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(x => parseInt(x, 10)).filter(Number.isFinite) : []
+    console.log('[ZIP] Parsed IDs:', ids)
+    if (ids.length === 0) return res.status(400).json({ error: 'no ids' })
+
+    // chunked lookups to avoid SQLite param limits
+    const CHUNK = 900
+    let rows = []
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunk = ids.slice(i, i + CHUNK)
+      const marks = chunk.map(() => '?').join(',')
+      const part = db.prepare(`SELECT id, path, fname FROM images WHERE id IN (${marks})`).all(...chunk)
+      rows = rows.concat(part)
+    }
+    if (rows.length === 0) return res.status(404).json({ error: 'not found' })
+
+    const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g,'')
+    const zipName = `photos-${ts}.zip`
+    res.setHeader('Content-Type', 'application/zip')
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(zipName)}`)
+
+    const archive = archiver('zip', { zlib: { level: 9 } })
+    archive.on('error', (err) => { console.error('zip error', err); try { res.status(500).end() } catch {} })
+    archive.pipe(res)
+
+    for (const r of rows) {
+      const abs = path.join(PHOTOS_ROOT, r.path)
+      try {
+        await fsp.access(abs)
+        archive.file(abs, { name: r.fname || path.basename(abs) })
+      } catch {
+        // skip missing files
+      }
+    }
+    await archive.finalize()
+  } catch (e) {
+    console.error('/download/batch error', e)
+    res.status(500).json({ error: e.message })
+  }
+})
+
 app.post('/api/index', async (req, res) => {
   try { await scanAndIndex(); res.json({ ok: true }) } catch (e) { res.status(500).json({ error: e.message }) }
 })
@@ -328,7 +370,6 @@ app.get('/media/:id', (req, res) => {
   fs.createReadStream(abs).pipe(res)
 })
 
-// Optional: force-download with filename
 app.get('/download/:id', (req, res) => {
   const id = Number(req.params.id)
   const row = db.prepare('SELECT path, fname FROM images WHERE id=?').get(id)
@@ -339,6 +380,12 @@ app.get('/download/:id', (req, res) => {
   res.setHeader('content-type', type)
   res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`)
   fs.createReadStream(abs).pipe(res)
+})
+
+// Debug route to catch all requests
+app.use('*', (req, res) => {
+  console.log('[DEBUG] Unhandled route:', req.method, req.originalUrl, 'Body:', req.body)
+  res.status(404).json({ error: 'Route not found', method: req.method, url: req.originalUrl })
 })
 
 app.listen(PORT, HOST, () => {

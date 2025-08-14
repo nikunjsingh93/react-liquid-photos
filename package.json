@@ -8,6 +8,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "archiver": "^7.0.1",
     "better-sqlite3": "^9.6.0",
     "chokidar": "^3.6.0",
     "cors": "^2.8.5",
