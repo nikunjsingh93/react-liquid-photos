@@ -1,58 +1,86 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import {
   FolderTree, RefreshCcw, Image as ImageIcon, ChevronRight, ChevronDown, X,
-  Maximize2, Download, Menu, Plus, Minus, Info, CheckSquare
+  Maximize2, Download, Menu, Plus, Minus, Info, CheckSquare, LogOut, Shield
 } from 'lucide-react'
 
-/** Robust API base: prefer VITE_API_BASE; otherwise in dev target :5174. */
-const API_BASE = (() => {
-  const envBase = import.meta?.env?.VITE_API_BASE
-  if (envBase) return envBase.replace(/\/+$/, '')
-  if (import.meta?.env?.DEV) {
-    const { protocol, hostname } = window.location
-    return `${protocol}//${hostname}:5174`
-  }
-  return window.location.origin // production: same-origin
-})()
+/* Same-origin base (Vite proxy handles /api, /thumb, /media, /download) */
+const API_BASE = window.location.origin
+const apiUrl = (path) => `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`
 
-/** Safe join helper so we never accidentally hit 5173 with a relative path. */
-const apiUrl = (path) => {
-  const cleanPath = path.startsWith('/') ? path : `/${path}`
-  return `${API_BASE}${cleanPath}`
-}
-
-console.log('[API_BASE DEBUG] env.DEV:', import.meta?.env?.DEV, 'VITE_API_BASE:', import.meta?.env?.VITE_API_BASE, 'window.location:', window.location.origin)
-if (import.meta?.env?.DEV) console.debug('[API_BASE]', API_BASE, ' → ', apiUrl('/download/batch'))
-
+/* ----- API ----- */
 const API = {
-  tree: async () => (await fetch(apiUrl('/api/tree'))).json(),
+  /* auth (note the /api prefix) */
+  me: async () => (await fetch(apiUrl('/api/auth/me'), { credentials: 'include' })).json(),
+  login: async (username, password) =>
+    (await fetch(apiUrl('/api/auth/login'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    })).json(),
+  logout: async () =>
+    (await fetch(apiUrl('/api/auth/logout'), { method: 'POST', credentials: 'include' })).json(),
+
+  /* admin */
+  adminUsers: async () => (await fetch(apiUrl('/api/admin/users'), { credentials: 'include' })).json(),
+  adminCreateUser: async (payload) =>
+    (await fetch(apiUrl('/api/admin/users'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })).json(),
+
+  /* photos */
+  tree: async () => (await fetch(apiUrl('/api/tree'), { credentials: 'include' })).json(),
   photos: async (params = {}, options = {}) => {
     const qs = new URLSearchParams(params).toString()
-    const r = await fetch(apiUrl(`/api/photos?${qs}`), options)
+    const r = await fetch(apiUrl(`/api/photos?${qs}`), { credentials: 'include', ...options })
     return await r.json()
   },
-  meta: async (id, options = {}) => {
-    const r = await fetch(apiUrl(`/api/meta/${id}`), options)
-    return await r.json()
-  },
-  rescan: async () => (await fetch(apiUrl('/api/index'), { method: 'POST' })).json(),
+  meta: async (id, options = {}) =>
+    (await fetch(apiUrl(`/api/meta/${id}`), { credentials: 'include', ...options })).json(),
+  rescan: async () =>
+    (await fetch(apiUrl('/api/index'), { method: 'POST', credentials: 'include' })).json(),
 }
 
+/* ----- UI helpers ----- */
 const GlassShell = ({ children }) => (
   <div className="h-full w-full bg-zinc-950 text-slate-100">
     <div className="h-full">{children}</div>
   </div>
 )
 
-function SidebarTree({ tree, open, toggle, select, selected }) {
+function SidebarTree({ tree, open, toggle, select, selected, onSignOut, user, onGoAdmin }) {
   if (!tree) return null
   return (
-    <div className="h-full overflow-auto p-2 pr-1">
-      <div className="flex items-center gap-2 text-slate-300 mb-2 px-2">
-        <FolderTree className="w-5 h-5" />
-        <span className="text-sm font-medium">Folders</span>
+    <div className="h-full flex flex-col">
+      <div className="flex-1 overflow-auto p-2 pr-1">
+        <div className="flex items-center gap-2 text-slate-300 mb-2 px-2">
+          <FolderTree className="w-5 h-5" />
+          <span className="text-sm font-medium">Folders</span>
+        </div>
+        <TreeNode node={tree} depth={0} open={open} toggle={toggle} select={select} selected={selected} />
       </div>
-      <TreeNode node={tree} depth={0} open={open} toggle={toggle} select={select} selected={selected} />
+      <div className="border-t border-white/10 p-2 flex items-center gap-2">
+        {user?.is_admin && (
+          <button
+            className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+            onClick={onGoAdmin}
+            title="Admin panel"
+          >
+            <Shield className="w-4 h-4" /> Admin
+          </button>
+        )}
+        <button
+          className="ml-auto inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+          onClick={onSignOut}
+          title="Sign out"
+        >
+          <LogOut className="w-4 h-4" /> Sign out
+        </button>
+      </div>
     </div>
   )
 }
@@ -103,7 +131,7 @@ function useMediaQuery(query) {
   return matches
 }
 
-// helpers
+/* helpers */
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return ''
   const units = ['B','KB','MB','GB','TB']
@@ -123,11 +151,18 @@ function parseZipFilenameFromCD(cd) {
   m = /filename="?([^"]+)"?/i.exec(cd)
   return m ? m[1] : null
 }
-
 const HEADER_H = 56
 const MOBILE_INFO_VH = 40
 
+/* ----- App ----- */
 export default function App() {
+  // auth
+  const [user, setUser] = useState(null)
+  const [authChecked, setAuthChecked] = useState(false)
+
+  // app view: 'photos' | 'admin'
+  const [view, setView] = useState('photos')
+
   // Sidebar + layout
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(280)
@@ -136,7 +171,7 @@ export default function App() {
   // Folder/tree
   const [tree, setTree] = useState(null)
   const [open, setOpen] = useState(new Set())
-  const [selected, setSelected] = useState('') // '' → All Media
+  const [selected, setSelected] = useState('') // server gives root per scope
 
   // Photos & paging
   const [photos, setPhotos] = useState([])
@@ -160,9 +195,7 @@ export default function App() {
   // Grid sizing
   const scrollRef = useRef(null)
   const sentinelRef = useRef(null)
-  const [tileMin, setTileMin] = useState(120)
-  const [gridCols, setGridCols] = useState(1)
-  const [tileSize, setTileSize] = useState(120)
+  const [tileMin, setTileMin] = useState(120) // controls min column width
   const [resizeOpen, setResizeOpen] = useState(false)
   const resizeRef = useRef(null)
   const [resizing, setResizing] = useState(false)
@@ -174,15 +207,36 @@ export default function App() {
   const controllerRef = useRef(null)
   const inFlightRef = useRef(false)
 
-  // Initial tree
+  // On mount, check session and fetch tree if logged in
   useEffect(() => {
     (async () => {
-      const t = await API.tree()
-      setTree(t)
-      setOpen(new Set([t.path]))
-      setSelected(t.path) // root node (usually '')
+      try {
+        const r = await API.me()
+        if (r?.user?.id) {
+          setUser(r.user)
+          const t = await API.tree()
+          setTree(t)
+          setOpen(new Set([t.path]))
+          setSelected(t.path)
+        } else {
+          setUser(null)
+        }
+      } catch {
+        setUser(null)
+      } finally {
+        setAuthChecked(true)
+      }
     })()
   }, [])
+
+  // Expand/collapse folders in the sidebar tree
+const toggle = useCallback((p) => {
+  setOpen(prev => {
+    const n = new Set(prev)
+    n.has(p) ? n.delete(p) : n.add(p)
+    return n
+  })
+}, [])
 
   // Close drawer on large screens
   useEffect(() => { if (!isSmall && sidebarOpen) setSidebarOpen(false) }, [isSmall, sidebarOpen])
@@ -202,33 +256,9 @@ export default function App() {
     return () => clearTimeout(t)
   }, [tileMin, resizing])
 
-  // Compute grid columns & tile size (gap halved: 3px desktop / 2px mobile)
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const calc = () => {
-      const style = getComputedStyle(el)
-      const pl = parseFloat(style.paddingLeft) || 0
-      const pr = parseFloat(style.paddingRight) || 0
-      const width = el.clientWidth - pl - pr
-      const gap = window.matchMedia('(min-width: 640px)').matches ? 3 : 2
-      if (width <= 0) return
-      const min = Math.max(60, tileMin)
-      let cols = Math.max(1, Math.floor((width + gap) / (min + gap)))
-      const inner = width - gap * (cols - 1)
-      const size = Math.floor(inner / cols)
-      setGridCols(cols)
-      setTileSize(size)
-    }
-    const ro = new ResizeObserver(calc)
-    ro.observe(el)
-    window.addEventListener('resize', calc)
-    calc()
-    return () => { ro.disconnect(); window.removeEventListener('resize', calc) }
-  }, [tileMin, sidebarWidth, isSmall])
-
   // Loader (first + subsequent pages)
   useEffect(() => {
+    if (!user) return
     const controller = new AbortController()
     controllerRef.current?.abort()
     controllerRef.current = controller
@@ -257,6 +287,7 @@ export default function App() {
           { folder: selected, q: '', page, pageSize: 200, _t: Date.now() },
           { signal: controller.signal }
         )
+        if (r?.error) throw new Error(r.error)
         setTotal(Number(r.total || 0))
 
         const incoming = r.items || []
@@ -266,7 +297,7 @@ export default function App() {
         }
 
         setPhotos(prev => page === 1 ? filtered : [...prev, ...filtered])
-        const nextLen = (page === 1 ? filtered.length : (photos.length + filtered.length))
+        const nextLen = (page === 1 ? filtered.length : (prevLen(prev) + filtered.length))
         setHasMore(nextLen < Number(r.total || nextLen))
         if (incoming.length > 0) setInitialLoaded(true)
       } catch (e) {
@@ -283,7 +314,7 @@ export default function App() {
     run()
     return () => { controller.abort(); inFlightRef.current = false; setLoading(false) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, requestKey, selected])
+  }, [page, requestKey, selected, user])
 
   // Infinite scroll
   useEffect(() => {
@@ -291,32 +322,10 @@ export default function App() {
     const io = new IntersectionObserver((ents) => {
       if (ents.some(e => e.isIntersecting)) setPage(p => p + 1)
     }, { root: scrollRef.current || null, rootMargin: '400px', threshold: 0 })
-    if (sentinelRef.current) io.observe(sentinelRef.current)
+    const el = sentinelRef.current
+    if (el) io.observe(el)
     return () => io.disconnect()
   }, [initialLoaded])
-
-  // Sidebar expand/collapse
-  const toggle = useCallback((p) => setOpen(s => { const n = new Set(s); n.has(p) ? n.delete(p) : n.add(p); return n }), [])
-  const select = useCallback((p) => setSelected(p), [])
-  const onResizePointerDown = useCallback((e) => {
-    if (isSmall) return
-    e.preventDefault()
-    const startX = e.clientX
-    const start = sidebarWidth
-    document.body.style.cursor = 'col-resize'
-    const onMove = (ev) => {
-      const delta = ev.clientX - startX
-      const next = Math.max(200, Math.min(560, start + delta))
-      setSidebarWidth(next)
-    }
-    const onUp = () => {
-      document.removeEventListener('pointermove', onMove)
-      document.removeEventListener('pointerup', onUp)
-      document.body.style.cursor = ''
-    }
-    document.addEventListener('pointermove', onMove)
-    document.addEventListener('pointerup', onUp)
-  }, [sidebarWidth, isSmall])
 
   // Viewer helpers
   const openViewer = (idx) => { if (!selectMode) { setViewer({ open: true, index: idx }); setInfoOpen(false) } }
@@ -334,6 +343,7 @@ export default function App() {
     }
     try {
       const m = await API.meta(id)
+      if (m?.error) throw new Error(m.error)
       metaCacheRef.current.set(id, m)
       setMeta(m)
       return m
@@ -368,7 +378,7 @@ export default function App() {
     const current = photos[viewer.index]
     if (!current) return
     try {
-      const res = await fetch(apiUrl(`/media/${current.id}`))
+      const res = await fetch(apiUrl(`/media/${current.id}`), { credentials: 'include' })
       if (!res.ok) throw new Error(`Download failed: ${res.status}`)
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
@@ -384,7 +394,7 @@ export default function App() {
     }
   }, [photos, viewer.index])
 
-  // Swipe (touch) nav
+  // Touch swipe
   const touchStartRef = useRef({ x: 0, y: 0, t: 0 })
   const onTouchStart = (e) => {
     const t = e.touches[0]
@@ -411,7 +421,7 @@ export default function App() {
     }
   }
 
-  // Multi-select helpers
+  // Multi-select
   const toggleSelectId = (id) => {
     setSelectedIds(prev => {
       const n = new Set(prev)
@@ -423,21 +433,16 @@ export default function App() {
     if (selectMode) toggleSelectId(id)
     else openViewer(idx)
   }
-  const exitSelectMode = () => { setSelectMode(false); setSelectedIds(new Set()) }
   const downloadZip = async () => {
     const ids = Array.from(selectedIds)
     if (ids.length === 0) return
     try {
-      const url = apiUrl('/download/batch')
-      console.log('[ZIP DEBUG] API_BASE:', API_BASE, 'URL:', url, 'IDs:', ids)
-      const requestBody = JSON.stringify({ ids })
-      console.log('[ZIP DEBUG] Request body:', requestBody)
-      const res = await fetch(url, {
+      const res = await fetch(apiUrl('/download/batch'), {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: requestBody
+        body: JSON.stringify({ ids })
       })
-      console.log('[ZIP DEBUG] Response status:', res.status, 'ok:', res.ok, 'headers:', Object.fromEntries(res.headers.entries()))
       if (!res.ok) throw new Error(`Zip failed: ${res.status}`)
       const blob = await res.blob()
       const dlUrl = URL.createObjectURL(blob)
@@ -455,229 +460,271 @@ export default function App() {
     }
   }
 
+  /* auth view switching */
+  if (!authChecked) {
+    return (
+      <GlassShell>
+        <div className="h-full grid place-items-center">
+          <div className="text-slate-300">Loading…</div>
+        </div>
+      </GlassShell>
+    )
+  }
+  if (!user) {
+    return (
+      <LoginScreen
+        onLoggedIn={async () => {
+          const r = await API.me().catch(() => null)
+          if (r?.user?.id) {
+            setUser(r.user)
+            const t = await API.tree()
+            setTree(t)
+            setOpen(new Set([t.path]))
+            setSelected(t.path)
+          }
+        }}
+      />
+    )
+  }
+
   const currentPhoto = viewer.open ? photos[viewer.index] : null
-  const truncatedName = (viewer.open && currentPhoto) ? ellipsizeWords(currentPhoto.fname || '', 8) : ''
+  const truncatedName = currentPhoto ? ellipsizeWords(currentPhoto.fname || '', 8) : ''
   const imgMaxHeight = isSmall && infoOpen
     ? `calc(100vh - ${HEADER_H}px - ${MOBILE_INFO_VH}vh - 24px)`
     : `calc(100vh - ${HEADER_H}px - 24px)`
 
   return (
     <GlassShell>
-      <div className="h-full min-h-0 grid" style={{ gridTemplateColumns: isSmall ? '1fr' : `${Math.round(sidebarWidth)}px 1fr` }}>
-        {/* Sidebar (desktop) */}
-        <aside className="hidden sm:block relative border-r border-white/10 bg-zinc-950">
-          <div className="flex items-center gap-2 p-3 border-b border-white/10">
-            <ImageIcon className="w-5 h-5 text-slate-200" />
-            <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
-            <button
-              className="ml-auto inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10"
-              onClick={() => API.rescan().then(() => API.tree().then(setTree))}
-              title="Rescan Library"
-            >
-              <RefreshCcw className="w-4 h-4" /> Rescan
-            </button>
-          </div>
-          <SidebarTree tree={tree} open={open} toggle={toggle} select={select} selected={selected} />
-          {/* Resize handle */}
-          <div
-            className="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-white/10"
-            onPointerDown={(e) => {
-              if (isSmall) return
-              e.preventDefault()
-              const startX = e.clientX
-              const start = sidebarWidth
-              document.body.style.cursor = 'col-resize'
-              const onMove = (ev) => {
-                const delta = ev.clientX - startX
-                const next = Math.max(200, Math.min(560, start + delta))
-                setSidebarWidth(next)
-              }
-              const onUp = () => {
-                document.removeEventListener('pointermove', onMove)
-                document.removeEventListener('pointerup', onUp)
-                document.body.style.cursor = ''
-              }
-              document.addEventListener('pointermove', onMove)
-              document.addEventListener('pointerup', onUp)
-            }}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Resize sidebar"
-          />
-        </aside>
-
-        {/* Main */}
-        <main className="flex flex-col min-h-0">
-          {/* Multi-select toolbar overlay */}
-          {selectMode && (
-            <div className="z-30 sticky top-0 bg-zinc-950/95 border-b border-white/10 shadow flex items-center justify-between px-3 py-2">
-              <div className="text-sm">
-                {selectedIds.size} selected
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
-                  onClick={downloadZip}
-                  title="Download .zip"
-                >
-                  <Download className="w-4 h-4" /> .zip
-                </button>
-                <button
-                  className="inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10 hover:bg-white/20"
-                  onClick={() => { setSelectMode(false); setSelectedIds(new Set()) }}
-                  title="Exit select"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+      {view === 'admin' ? (
+        <AdminPanel user={user} onClose={() => setView('photos')} />
+      ) : (
+        <div className="h-full min-h-0 grid" style={{ gridTemplateColumns: isSmall ? '1fr' : `${Math.round(sidebarWidth)}px 1fr` }}>
+          {/* Sidebar (desktop) */}
+          <aside className="hidden sm:block relative border-r border-white/10 bg-zinc-950">
+            <div className="flex items-center gap-2 p-3 border-b border-white/10">
+              <ImageIcon className="w-5 h-5 text-slate-200" />
+              <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
+              <button
+                className="ml-auto inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10"
+                onClick={() => API.rescan().then(() => API.tree().then(t => { setTree(t); setOpen(new Set([t.path])); setSelected(t.path) }))}
+                title="Rescan Library"
+              >
+                <RefreshCcw className="w-4 h-4" /> Rescan
+              </button>
             </div>
-          )}
+            <SidebarTree
+              tree={tree}
+              open={open}
+              toggle={toggle}
+              select={setSelected}
+              selected={selected}
+              user={user}
+              onGoAdmin={() => setView('admin')}
+              onSignOut={async () => { await API.logout(); setUser(null) }}
+            />
+            {/* Resize handle */}
+            <div
+              className="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-white/10"
+              onPointerDown={(e) => {
+                if (isSmall) return
+                e.preventDefault()
+                const startX = e.clientX
+                const start = sidebarWidth
+                document.body.style.cursor = 'col-resize'
+                const onMove = (ev) => {
+                  const delta = ev.clientX - startX
+                  const next = Math.max(200, Math.min(560, start + delta))
+                  setSidebarWidth(next)
+                }
+                const onUp = () => {
+                  document.removeEventListener('pointermove', onMove)
+                  document.removeEventListener('pointerup', onUp)
+                  document.body.style.cursor = ''
+                }
+                document.addEventListener('pointermove', onMove)
+                document.addEventListener('pointerup', onUp)
+              }}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize sidebar"
+            />
+          </aside>
 
-          {/* Regular header */}
-          {!selectMode && (
-            <header className="relative z-20 p-3 border-b border-white/10 bg-zinc-950">
-              <div className="flex items-center gap-3">
-                <button
-                  className="sm:hidden inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10"
-                  onClick={() => setSidebarOpen(true)}
-                  aria-label="Open sidebar"
-                >
-                  <Menu className="w-5 h-5 text-slate-200" />
-                </button>
-
-                {/* Multiselect toggle (left of resize) */}
-                <button
-                  className={`inline-flex items-center gap-2 px-2 py-1 rounded border ${selectMode ? 'bg-white/20 border-white/20' : 'bg-white/10 border-white/10 hover:bg-white/15'}`}
-                  onClick={() => setSelectMode(v => { const nv = !v; if (!nv) setSelectedIds(new Set()); return nv })}
-                  title="Multi-select"
-                >
-                  <CheckSquare className="w-4 h-4" />
-                  <span className="text-xs hidden sm:block">Select</span>
-                </button>
-
-                <div ref={resizeRef} className="relative ml-auto">
+          {/* Main */}
+          <main className="flex flex-col min-h-0">
+            {/* Multi-select toolbar overlay */}
+            {selectMode && (
+              <div className="z-30 sticky top-0 bg-zinc-950/95 border-b border-white/10 shadow flex items-center justify-between px-3 py-2">
+                <div className="text-sm">{selectedIds.size} selected</div>
+                <div className="flex items-center gap-2">
                   <button
                     className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
-                    onClick={() => setResizeOpen(v => !v)}
-                    title="Resize grid"
-                    aria-haspopup="menu"
-                    aria-expanded={resizeOpen}
+                    onClick={downloadZip}
+                    title="Download .zip"
                   >
-                    <Maximize2 className="w-4 h-4" />
+                    <Download className="w-4 h-4" /> .zip
                   </button>
-                  {resizeOpen && (
-                    <div className="absolute right-0 top-full mt-2 z-30 w-40 rounded border border-white/10 bg-zinc-950 shadow-xl p-2">
-                      <div className="text-xs text-slate-300 mb-2">Resize grid</div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
-                          onClick={() => { setResizing(true); setTileMin(v => Math.min(640, v + 20)) }}
-                          title="Larger"
-                        >
-                          <Plus className="w-4 h-4" />
-                        </button>
-                        <button
-                          className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
-                          onClick={() => { setResizing(true); setTileMin(v => Math.max(60, v - 20)) }}
-                          title="Smaller"
-                        >
-                          <Minus className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div className="text-xs text-slate-300 shrink-0 px-2 py-1 rounded bg-white/5 border border-white/10">
-                  {total.toLocaleString()} photos
-                </div>
-              </div>
-            </header>
-          )}
-
-          <section ref={scrollRef} className="relative flex-1 overflow-auto p-3">
-            {resizing && (
-              <div className="absolute inset-0 z-10 bg-black/30 flex items-center justify-center">
-                <div className="h-10 w-10 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-              </div>
-            )}
-            {error && (
-              <div className="mb-3 text-sm text-rose-300 bg-rose-950/40 border border-rose-500/30 rounded-lg px-3 py-2">
-                {error}
-              </div>
-            )}
-
-            {/* Grid (gap halved, borders removed) */}
-            <div
-              className="grid"
-              style={{ gridTemplateColumns: `repeat(${gridCols}, ${tileSize}px)`, gap: isSmall ? '2px' : '3px' }}
-            >
-              {photos.map((p, i) => {
-                const isSel = selectedIds.has(p.id)
-                return (
                   <button
-                    key={p.id}
-                    className={`group relative aspect-[4/3] overflow-hidden bg-white/5 ${isSel ? 'ring-2 ring-sky-400/60' : ''} hover:scale-[1.01] transition`}
-                    onClick={() => onTileClick(p.id, i)}
+                    className="inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10 hover:bg-white/20"
+                    onClick={() => { setSelectMode(false); setSelectedIds(new Set()) }}
+                    title="Exit select"
                   >
-                    <img
-                      src={apiUrl(`/thumb/${p.id}`)}
-                      alt={p.fname}
-                      loading="lazy"
-                      className="h-full w-full object-cover"
-                    />
-                    {selectMode && (
-                      <div className="absolute left-1 top-1 bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded">
-                        {isSel ? '✓ Selected' : 'Tap to select'}
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Regular header */}
+            {!selectMode && (
+              <header className="relative z-20 p-3 border-b border-white/10 bg-zinc-950">
+                <div className="flex items-center gap-3">
+                  <button
+                    className="sm:hidden inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10"
+                    onClick={() => setSidebarOpen(true)}
+                    aria-label="Open sidebar"
+                  >
+                    <Menu className="w-5 h-5 text-slate-200" />
+                  </button>
+
+                  {/* Multiselect toggle */}
+                  <button
+                    className={`inline-flex items-center gap-2 px-2 py-1 rounded border ${selectMode ? 'bg-white/20 border-white/20' : 'bg-white/10 border-white/10 hover:bg-white/15'}`}
+                    onClick={() => setSelectMode(v => { const nv = !v; if (!nv) setSelectedIds(new Set()); return nv })}
+                    title="Multi-select"
+                  >
+                    <CheckSquare className="w-4 h-4" />
+                    <span className="text-xs hidden sm:block">Select</span>
+                  </button>
+
+                  {/* Admin button */}
+                  {user?.is_admin && (
+                    <button
+                      className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                      onClick={() => setView('admin')}
+                      title="Admin panel"
+                    >
+                      <Shield className="w-4 h-4" /> Admin
+                    </button>
+                  )}
+
+                  {/* Resize */}
+                  <div ref={resizeRef} className="relative ml-auto">
+                    <button
+                      className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                      onClick={() => setResizeOpen(v => !v)}
+                      title="Resize grid"
+                      aria-haspopup="menu"
+                      aria-expanded={resizeOpen}
+                    >
+                      <Maximize2 className="w-4 h-4" />
+                    </button>
+                    {resizeOpen && (
+                      <div className="absolute right-0 top-full mt-2 z-30 w-40 rounded border border-white/10 bg-zinc-950 shadow-xl p-2">
+                        <div className="text-xs text-slate-300 mb-2">Resize grid</div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                            onClick={() => { setResizing(true); setTileMin(v => Math.min(640, v + 20)) }}
+                            title="Larger"
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                          <button
+                            className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                            onClick={() => { setResizing(true); setTileMin(v => Math.max(60, v - 20)) }}
+                            title="Smaller"
+                          >
+                            <Minus className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     )}
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition" />
+                  </div>
+
+                  {/* Sign out always visible */}
+                  <button
+                    className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                    title="Sign out"
+                    onClick={async () => { await API.logout(); setUser(null) }}
+                  >
+                    <LogOut className="w-4 h-4" />
+                    <span className="text-xs hidden sm:block">Sign out</span>
                   </button>
-                )
-              })}
-            </div>
 
-            <div ref={sentinelRef} className="h-20" />
-            {loading && <div className="text-center text-slate-400 py-4">Loading…</div>}
-          </section>
-        </main>
-      </div>
+                  <div className="text-xs text-slate-300 shrink-0 px-2 py-1 rounded bg-white/5 border border-white/10">
+                    {total.toLocaleString()} photos
+                  </div>
+                </div>
+              </header>
+            )}
 
-      {/* Mobile sidebar drawer */}
-      {sidebarOpen && (
-        <div className="fixed inset-0 z-50 sm:hidden">
-          <button className="absolute inset-0 bg-black/60" onClick={() => setSidebarOpen(false)} aria-label="Close sidebar overlay" />
-          <aside className="absolute inset-y-0 left-0 w-[82vw] max-w-[320px] bg-zinc-950 border-r border-white/10 shadow-xl">
-            <div className="h-full overflow-auto p-2 pr-1">
-              <SidebarTree
-                tree={tree}
-                open={open}
-                toggle={toggle}
-                select={(p) => { setSelected(p); setSidebarOpen(false) }}
-                selected={selected}
-              />
-            </div>
-          </aside>
+            <section ref={scrollRef} className="relative flex-1 overflow-auto p-3">
+              {resizing && (
+                <div className="absolute inset-0 z-10 bg-black/30 flex items-center justify-center">
+                  <div className="h-10 w-10 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                </div>
+              )}
+              {error && (
+                <div className="mb-3 text-sm text-rose-300 bg-rose-950/40 border border-rose-500/30 rounded-lg px-3 py-2">
+                  {error}
+                </div>
+              )}
+
+              {/* Grid (auto-fill columns, tiny gap, no borders) */}
+              <div
+                className="grid"
+                style={{
+                  gridTemplateColumns: `repeat(auto-fill, minmax(${Math.max(60, tileMin)}px, 1fr))`,
+                  gap: isSmall ? '2px' : '3px'
+                }}
+              >
+                {photos.map((p, i) => {
+                  const isSel = selectedIds.has(p.id)
+                  return (
+                    <button
+                      key={p.id}
+                      className={`group relative aspect-[4/3] overflow-hidden bg-white/5 ${isSel ? 'ring-2 ring-sky-400/60' : ''} hover:scale-[1.01] transition`}
+                      onClick={() => onTileClick(p.id, i)}
+                    >
+                      <img
+                        src={apiUrl(`/thumb/${p.id}`)}
+                        alt={p.fname}
+                        loading="lazy"
+                        className="h-full w-full object-cover"
+                      />
+                      {selectMode && (
+                        <div className="absolute left-1 top-1 bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded">
+                          {isSel ? '✓ Selected' : 'Tap to select'}
+                        </div>
+                      )}
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition" />
+                    </button>
+                  )
+                })}
+              </div>
+
+              <div ref={sentinelRef} className="h-20" />
+              {loading && <div className="text-center text-slate-400 py-4">Loading…</div>}
+            </section>
+          </main>
         </div>
       )}
 
-      {/* Fullscreen Viewer */}
-      {viewer.open && photos[viewer.index] && (
+      {/* Fullscreen Viewer (restored) */}
+      {viewer.open && currentPhoto && (
         <Viewer
           isSmall={isSmall}
           infoOpen={infoOpen}
           setInfoOpen={setInfoOpen}
-          photo={photos[viewer.index]}
-          truncatedName={ellipsizeWords(photos[viewer.index].fname || '', 8)}
-          imgMaxHeight={isSmall && infoOpen
-            ? `calc(100vh - ${HEADER_H}px - ${MOBILE_INFO_VH}vh - 24px)`
-            : `calc(100vh - ${HEADER_H}px - 24px)`}
+          photo={currentPhoto}
+          truncatedName={truncatedName}
+          imgMaxHeight={imgMaxHeight}
           onPrev={prev}
           onNext={next}
           onClose={closeViewer}
           onDownload={downloadActive}
           ensureMeta={ensureMeta}
-          metaCacheRef={metaCacheRef}
           meta={meta}
           onTouchStart={onTouchStart}
           onTouchMove={onTouchMove}
@@ -688,87 +735,170 @@ export default function App() {
   )
 }
 
-function Viewer({
-  isSmall, infoOpen, setInfoOpen, photo, truncatedName, imgMaxHeight,
-  onPrev, onNext, onClose, onDownload, ensureMeta, metaCacheRef, meta,
-  onTouchStart, onTouchMove, onTouchEnd
-}) {
+function prevLen(arr) { return Array.isArray(arr) ? arr.length : 0 }
+
+/* ----- Login Screen ----- */
+function LoginScreen({ onLoggedIn }) {
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const submit = async (e) => {
+    e.preventDefault()
+    setBusy(true); setError('')
+    try {
+      const r = await API.login(username.trim(), password)
+      if (r?.ok) {
+        await onLoggedIn()
+      } else {
+        setError(r?.error || 'Login failed')
+      }
+    } catch {
+      setError('Login failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex">
-      <div className="flex-1 flex flex-col">
-        {/* Viewer Header (no overlap). Centered on sm+; left-aligned on mobile */}
-        <div className="relative flex items-center px-4" style={{ height: HEADER_H }}>
-          {/* Absolutely centered title on sm+ */}
-          <div className="pointer-events-none sm:absolute sm:left-1/2 sm:-translate-x-1/2 sm:text-center sm:max-w-[60vw] min-w-0 flex-1">
-            <div className="truncate text-sm text-white text-left sm:text-center">
-              {truncatedName}
+    <GlassShell>
+      <div className="h-full grid place-items-center p-4">
+        <form onSubmit={submit} className="w-full max-w-sm bg-white/5 border border-white/10 rounded-xl p-4">
+          <div className="text-lg font-semibold text-white mb-2">Sign in</div>
+          <div className="text-xs text-slate-400 mb-4">Use your account credentials.</div>
+          {error && <div className="mb-3 text-xs text-rose-300 bg-rose-950/40 border border-rose-500/30 rounded px-2 py-1">{error}</div>}
+          <label className="block text-sm text-slate-300 mb-1">Username</label>
+          <input
+            className="w-full mb-3 px-3 py-2 rounded bg-white/10 border border-white/10 text-slate-100"
+            value={username} onChange={e => setUsername(e.target.value)} autoFocus
+          />
+          <label className="block text-sm text-slate-300 mb-1">Password</label>
+          <input
+            type="password"
+            className="w-full mb-4 px-3 py-2 rounded bg-white/10 border border-white/10 text-slate-100"
+            value={password} onChange={e => setPassword(e.target.value)}
+          />
+          <button
+            type="submit" disabled={busy}
+            className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+          >
+            {busy ? 'Signing in…' : 'Sign in'}
+          </button>
+        </form>
+      </div>
+    </GlassShell>
+  )
+}
+
+/* ----- Admin Panel ----- */
+function AdminPanel({ user, onClose }) {
+  const [list, setList] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [form, setForm] = useState({ username: '', password: '', path: '' })
+  const [creating, setCreating] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true); setError('')
+    try {
+      const r = await API.adminUsers()
+      if (r?.items) setList(r.items); else throw new Error(r?.error || 'Failed to load users')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const createUser = async () => {
+    if (!form.username || !form.password) { setError('Username and password required'); return }
+    setCreating(true); setError('')
+    try {
+      const r = await API.adminCreateUser({ username: form.username, password: form.password, root_path: form.path })
+      if (!r?.ok) throw new Error(r?.error || 'Create failed')
+      setForm({ username: '', password: '', path: '' })
+      await load()
+      alert('User created')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  return (
+    <div className="h-full grid" style={{ gridTemplateRows: 'auto 1fr' }}>
+      <header className="p-3 border-b border-white/10 bg-zinc-950 flex items-center gap-2">
+        <Shield className="w-5 h-5 text-slate-200" />
+        <div className="text-sm font-semibold text-slate-100">Admin Panel</div>
+        <div className="ml-auto" />
+        <button
+          className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+          onClick={onClose}
+        >
+          Back to Library
+        </button>
+      </header>
+      <div className="p-3 overflow-auto">
+        {error && <div className="mb-3 text-sm text-rose-300 bg-rose-950/40 border border-rose-500/30 rounded px-3 py-2">{error}</div>}
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="bg-white/5 border border-white/10 rounded-xl p-3">
+            <div className="text-sm font-semibold mb-2">Create User</div>
+            <div className="text-xs text-slate-400 mb-3">Leave path blank to grant full-library access.</div>
+            <div className="space-y-2">
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">Username</label>
+                <input className="w-full px-2 py-1.5 rounded bg-white/10 border border-white/10" value={form.username} onChange={e=>setForm(f=>({...f, username:e.target.value}))}/>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">Password</label>
+                <input type="password" className="w-full px-2 py-1.5 rounded bg-white/10 border border-white/10" value={form.password} onChange={e=>setForm(f=>({...f, password:e.target.value}))}/>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">Allowed Path (relative to library)</label>
+                <input placeholder="e.g. 2024/Trips/Paris" className="w-full px-2 py-1.5 rounded bg-white/10 border border-white/10" value={form.path} onChange={e=>setForm(f=>({...f, path:e.target.value}))}/>
+              </div>
+              <div className="pt-2">
+                <button disabled={creating} className="inline-flex items-center gap-2 px-3 py-1.5 rounded bg-white/10 border border-white/10 hover:bg-white/15" onClick={createUser}>
+                  {creating ? 'Creating…' : 'Create user'}
+                </button>
+              </div>
             </div>
           </div>
-          {/* Right controls */}
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
-              onClick={async () => { setInfoOpen(v => !v); if (!infoOpen) await ensureMeta(photo.id) }}
-              title="Info"
-            >
-              <Info className="w-6 h-6 text-white" />
-            </button>
-            <button
-              className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
-              onClick={onDownload}
-              title="Download"
-            >
-              <Download className="w-6 h-6 text-white" />
-            </button>
-            <button
-              className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
-              onClick={onClose}
-              title="Close"
-            >
-              <X className="w-6 h-6 text-white" />
-            </button>
+
+          <div className="bg-white/5 border border-white/10 rounded-xl p-3">
+            <div className="text-sm font-semibold mb-2">Users</div>
+            {loading ? (
+              <div className="text-slate-400 text-sm">Loading users…</div>
+            ) : (
+              <div className="space-y-2 text-sm">
+                {list.map(u => (
+                  <div key={u.id} className="rounded border border-white/10 p-2">
+                    <div className="flex items-center gap-2">
+                      <div className="font-medium">{u.username}</div>
+                      {u.is_admin ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300 border border-yellow-400/30">ADMIN</span> : null}
+                      <div className="ml-auto text-xs text-slate-400">{new Date(u.created_at).toLocaleString()}</div>
+                    </div>
+                    <div className="text-xs text-slate-300 mt-1">
+                      Scope: <span className="text-slate-100">{u.root_path || <em>full library</em>}</span>
+                    </div>
+                  </div>
+                ))}
+                {list.length === 0 && <div className="text-slate-400 text-sm">No users yet.</div>}
+              </div>
+            )}
           </div>
         </div>
-
-        {/* Image/body area */}
-        <div className="relative flex-1 flex items-center justify-center px-3 pb-3">
-          <button className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={onPrev}>◀</button>
-
-          {/* No rounded corners or borders in fullscreen */}
-          <img
-            src={apiUrl(`/media/${photo.id}`)}
-            alt={photo.fname}
-            className=""
-            style={{ maxHeight: imgMaxHeight, maxWidth: isSmall && infoOpen ? '94vw' : '92vw' }}
-            onTouchStart={onTouchStart}
-            onTouchMove={onTouchMove}
-            onTouchEnd={onTouchEnd}
-          />
-
-          <button className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={onNext}>▶</button>
-        </div>
       </div>
-
-      {/* Desktop right info panel */}
-      {!isSmall && infoOpen && (
-        <aside className="w-[340px] max-w-[80vw] border-l border-white/10 bg-zinc-950/95 backdrop-blur px-4 py-4 overflow-auto">
-          <InfoPanel meta={meta} fallback={photo} />
-        </aside>
-      )}
-
-      {/* Mobile bottom sheet info panel */}
-      {isSmall && infoOpen && (
-        <aside
-          className="fixed bottom-0 left-0 right-0 z-[60] border-t border-white/10 bg-zinc-950/95 backdrop-blur px-4 py-3 overflow-auto"
-          style={{ height: `${MOBILE_INFO_VH}vh` }}
-        >
-          <InfoPanel meta={meta} fallback={photo} />
-        </aside>
-      )}
     </div>
   )
 }
 
+/* ----- Info Panel ----- */
 function InfoPanel({ meta, fallback }) {
   const file = meta?.fname || fallback?.fname
   const folder = meta?.folder || ''
@@ -805,5 +935,77 @@ function InfoPanel({ meta, fallback }) {
         )}
       </div>
     </>
+  )
+}
+
+/* ----- Viewer ----- */
+function Viewer({
+  isSmall, infoOpen, setInfoOpen, photo, truncatedName, imgMaxHeight,
+  onPrev, onNext, onClose, onDownload, ensureMeta, meta, onTouchStart, onTouchMove, onTouchEnd
+}) {
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex">
+      <div className="flex-1 flex flex-col">
+        <div className="relative flex items-center px-4" style={{ height: HEADER_H }}>
+          <div className="pointer-events-none sm:absolute sm:left-1/2 sm:-translate-x-1/2 sm:text-center sm:max-w-[60vw] min-w-0 flex-1">
+            <div className="truncate text-sm text-white text-left sm:text-center">
+              {truncatedName}
+            </div>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+              onClick={async () => { setInfoOpen(v => !v); if (!infoOpen) await ensureMeta(photo.id) }}
+              title="Info"
+            >
+              <Info className="w-6 h-6 text-white" />
+            </button>
+            <button
+              className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+              onClick={onDownload}
+              title="Download"
+            >
+              <Download className="w-6 h-6 text-white" />
+            </button>
+            <button
+              className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+              onClick={onClose}
+              title="Close"
+            >
+              <X className="w-6 h-6 text-white" />
+            </button>
+          </div>
+        </div>
+
+        <div className="relative flex-1 flex items-center justify-center px-3 pb-3">
+          <button className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={onPrev}>◀</button>
+
+          <img
+            src={apiUrl(`/media/${photo.id}`)}
+            alt={photo.fname}
+            style={{ maxHeight: imgMaxHeight, maxWidth: isSmall && infoOpen ? '94vw' : '92vw' }}
+            onTouchStart={onTouchStart}
+            onTouchMove={onTouchMove}
+            onTouchEnd={onTouchEnd}
+          />
+
+          <button className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={onNext}>▶</button>
+        </div>
+      </div>
+
+      {!isSmall && infoOpen && (
+        <aside className="w-[340px] max-w-[80vw] border-l border-white/10 bg-zinc-950/95 backdrop-blur px-4 py-4 overflow-auto">
+          <InfoPanel meta={meta} fallback={photo} />
+        </aside>
+      )}
+      {isSmall && infoOpen && (
+        <aside
+          className="fixed bottom-0 left-0 right-0 z-[60] border-t border-white/10 bg-zinc-950/95 backdrop-blur px-4 py-3 overflow-auto"
+          style={{ height: `${MOBILE_INFO_VH}vh` }}
+        >
+          <InfoPanel meta={meta} fallback={photo} />
+        </aside>
+      )}
+    </div>
   )
 }
