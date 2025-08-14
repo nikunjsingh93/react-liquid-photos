@@ -39,7 +39,7 @@ const API = {
 }
 
 const GlassShell = ({ children }) => (
-  <div className="h-full w-full bg-slate-900 text-slate-100">
+  <div className="h-full w-full bg-zinc-950 text-slate-100">
     <div className="h-full">{children}</div>
   </div>
 )
@@ -202,7 +202,7 @@ export default function App() {
     return () => clearTimeout(t)
   }, [tileMin, resizing])
 
-  // Compute grid columns & tile size
+  // Compute grid columns & tile size (gap halved: 3px desktop / 2px mobile)
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
@@ -211,7 +211,7 @@ export default function App() {
       const pl = parseFloat(style.paddingLeft) || 0
       const pr = parseFloat(style.paddingRight) || 0
       const width = el.clientWidth - pl - pr
-      const gap = window.matchMedia('(min-width: 640px)').matches ? 6 : 4
+      const gap = window.matchMedia('(min-width: 640px)').matches ? 3 : 2
       if (width <= 0) return
       const min = Math.max(60, tileMin)
       let cols = Math.max(1, Math.floor((width + gap) / (min + gap)))
@@ -465,7 +465,7 @@ export default function App() {
     <GlassShell>
       <div className="h-full min-h-0 grid" style={{ gridTemplateColumns: isSmall ? '1fr' : `${Math.round(sidebarWidth)}px 1fr` }}>
         {/* Sidebar (desktop) */}
-        <aside className="hidden sm:block relative border-r border-white/10 bg-slate-900">
+        <aside className="hidden sm:block relative border-r border-white/10 bg-zinc-950">
           <div className="flex items-center gap-2 p-3 border-b border-white/10">
             <ImageIcon className="w-5 h-5 text-slate-200" />
             <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
@@ -510,7 +510,7 @@ export default function App() {
         <main className="flex flex-col min-h-0">
           {/* Multi-select toolbar overlay */}
           {selectMode && (
-            <div className="z-30 sticky top-0 bg-slate-950/95 border-b border-white/10 shadow flex items-center justify-between px-3 py-2">
+            <div className="z-30 sticky top-0 bg-zinc-950/95 border-b border-white/10 shadow flex items-center justify-between px-3 py-2">
               <div className="text-sm">
                 {selectedIds.size} selected
               </div>
@@ -535,7 +535,7 @@ export default function App() {
 
           {/* Regular header */}
           {!selectMode && (
-            <header className="relative z-20 p-3 border-b border-white/10 bg-slate-900">
+            <header className="relative z-20 p-3 border-b border-white/10 bg-zinc-950">
               <div className="flex items-center gap-3">
                 <button
                   className="sm:hidden inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10"
@@ -566,7 +566,7 @@ export default function App() {
                     <Maximize2 className="w-4 h-4" />
                   </button>
                   {resizeOpen && (
-                    <div className="absolute right-0 top-full mt-2 z-30 w-40 rounded border border-white/10 bg-slate-900 shadow-xl p-2">
+                    <div className="absolute right-0 top-full mt-2 z-30 w-40 rounded border border-white/10 bg-zinc-950 shadow-xl p-2">
                       <div className="text-xs text-slate-300 mb-2">Resize grid</div>
                       <div className="flex items-center gap-2">
                         <button
@@ -607,14 +607,17 @@ export default function App() {
               </div>
             )}
 
-            {/* Grid */}
-            <div className="grid gap-1 sm:gap-1.5" style={{ gridTemplateColumns: `repeat(${gridCols}, ${tileSize}px)` }}>
+            {/* Grid (gap halved, borders removed) */}
+            <div
+              className="grid"
+              style={{ gridTemplateColumns: `repeat(${gridCols}, ${tileSize}px)`, gap: isSmall ? '2px' : '3px' }}
+            >
               {photos.map((p, i) => {
                 const isSel = selectedIds.has(p.id)
                 return (
                   <button
                     key={p.id}
-                    className={`group relative aspect-[4/3] overflow-hidden bg-white/5 border ${isSel ? 'border-sky-400 ring-2 ring-sky-400/40' : 'border-white/10'} hover:scale-[1.01] transition`}
+                    className={`group relative aspect-[4/3] overflow-hidden bg-white/5 ${isSel ? 'ring-2 ring-sky-400/60' : ''} hover:scale-[1.01] transition`}
                     onClick={() => onTileClick(p.id, i)}
                   >
                     <img
@@ -644,7 +647,7 @@ export default function App() {
       {sidebarOpen && (
         <div className="fixed inset-0 z-50 sm:hidden">
           <button className="absolute inset-0 bg-black/60" onClick={() => setSidebarOpen(false)} aria-label="Close sidebar overlay" />
-          <aside className="absolute inset-y-0 left-0 w-[82vw] max-w-[320px] bg-slate-900 border-r border-white/10 shadow-xl">
+          <aside className="absolute inset-y-0 left-0 w-[82vw] max-w-[320px] bg-zinc-950 border-r border-white/10 shadow-xl">
             <div className="h-full overflow-auto p-2 pr-1">
               <SidebarTree
                 tree={tree}
@@ -748,7 +751,7 @@ function Viewer({
 
       {/* Desktop right info panel */}
       {!isSmall && infoOpen && (
-        <aside className="w-[340px] max-w-[80vw] border-l border-white/10 bg-slate-900/95 backdrop-blur px-4 py-4 overflow-auto">
+        <aside className="w-[340px] max-w-[80vw] border-l border-white/10 bg-zinc-950/95 backdrop-blur px-4 py-4 overflow-auto">
           <InfoPanel meta={meta} fallback={photo} />
         </aside>
       )}
@@ -756,7 +759,7 @@ function Viewer({
       {/* Mobile bottom sheet info panel */}
       {isSmall && infoOpen && (
         <aside
-          className="fixed bottom-0 left-0 right-0 z-[60] border-t border-white/10 bg-slate-900/95 backdrop-blur px-4 py-3 overflow-auto"
+          className="fixed bottom-0 left-0 right-0 z-[60] border-t border-white/10 bg-zinc-950/95 backdrop-blur px-4 py-3 overflow-auto"
           style={{ height: `${MOBILE_INFO_VH}vh` }}
         >
           <InfoPanel meta={meta} fallback={photo} />
