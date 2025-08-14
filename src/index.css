@@ -2,4 +2,5 @@
 
 /* App-wide tweaks */
 html, body, #root { height: 100%; }
+html, body { overflow: hidden; }
 * { min-width: 0; }

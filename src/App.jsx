@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffect } from 'react'
 import AutoSizer from 'react-virtualized-auto-sizer'
 import { FixedSizeGrid as Grid } from 'react-window'
-import { FolderTree, RefreshCcw, Search, Image as ImageIcon, ChevronRight, ChevronDown, X, Maximize2 } from 'lucide-react'
+import { FolderTree, RefreshCcw, Search, Image as ImageIcon, ChevronRight, ChevronDown, X, Maximize2, Download } from 'lucide-react'
 
 const BASE = import.meta?.env?.DEV ? 'http://127.0.0.1:5174' : ''
 const API = {
@@ -200,11 +200,12 @@ export default function App() {
   const select = useCallback((p) => setSelected(p), [])
 
   const sentinelRef = useRef(null)
+  const scrollRef = useRef(null)
   useEffect(() => {
     if (!initialLoaded) return
     const io = new IntersectionObserver((ents) => {
       if (ents.some(e => e.isIntersecting)) setPage(p => p + 1)
-    }, { rootMargin: '400px', threshold: 0 })
+    }, { root: scrollRef.current || null, rootMargin: '400px', threshold: 0 })
     if (sentinelRef.current) io.observe(sentinelRef.current)
     return () => io.disconnect()
   }, [initialLoaded])
@@ -213,6 +214,26 @@ export default function App() {
   const closeViewer = () => setViewer({ open: false, index: 0 })
   const next = () => setViewer(v => ({ ...v, index: Math.min(v.index + 1, photos.length - 1) }))
   const prev = () => setViewer(v => ({ ...v, index: Math.max(v.index - 1, 0) }))
+
+  const downloadActive = useCallback(async () => {
+    const current = photos[viewer.index]
+    if (!current) return
+    try {
+      const res = await fetch(`${BASE}/media/${current.id}`)
+      if (!res.ok) throw new Error(`Download failed: ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = current.fname
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error('download failed', e)
+    }
+  }, [photos, viewer.index])
 
   useEffect(() => {
     const onKey = (e) => {
@@ -227,7 +248,7 @@ export default function App() {
 
   return (
     <GlassShell>
-      <div className="h-full grid grid-cols-[280px_1fr]">
+      <div className="h-full min-h-0 grid grid-cols-[280px_1fr]">
         <aside className="border-r border-white/10 bg-white/5">
           <div className="flex items-center gap-2 p-3 border-b border-white/10">
             <ImageIcon className="w-5 h-5 text-slate-200" />
@@ -242,7 +263,7 @@ export default function App() {
           </div>
           <SidebarTree tree={tree} open={open} toggle={toggle} select={select} selected={selected} />
         </aside>
-        <main className="flex flex-col">
+        <main className="flex flex-col min-h-0">
           <header className="p-3 border-b border-white/10 bg-white/5 backdrop-blur-xl">
             <div className="flex items-center gap-3">
               <div className="relative flex-1">
@@ -258,7 +279,7 @@ export default function App() {
             </div>
           </header>
 
-          <section className="flex-1 overflow-auto p-3">
+          <section ref={scrollRef} className="flex-1 overflow-auto p-3">
             {error && (
               <div className="mb-3 text-sm text-rose-300 bg-rose-950/40 border border-rose-500/30 rounded-lg px-3 py-2">
                 {error}
@@ -291,6 +312,13 @@ export default function App() {
       {/* Fullscreen Viewer */}
       {viewer.open && photos[viewer.index] && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
+          <button
+            className="absolute top-4 right-16 p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+            onClick={downloadActive}
+            title="Download"
+          >
+            <Download className="w-6 h-6 text-white" />
+          </button>
           <button className="absolute top-4 right-4 p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={closeViewer}>
             <X className="w-6 h-6 text-white" />
           </button>

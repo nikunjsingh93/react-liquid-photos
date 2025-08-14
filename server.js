@@ -234,6 +234,20 @@ app.get('/media/:id', (req, res) => {
   fs.createReadStream(abs).pipe(res)
 })
 
+// Download original with correct filename+extension
+app.get('/download/:id', (req, res) => {
+  const id = Number(req.params.id)
+  const row = db.prepare('SELECT path, fname FROM images WHERE id=?').get(id)
+  if (!row) return res.status(404).end()
+  const abs = path.join(PHOTOS_ROOT, row.path)
+  const type = mime.lookup(abs) || 'application/octet-stream'
+  const fileName = row.fname || path.basename(abs)
+  const encoded = encodeURIComponent(fileName).replace(/%20/g, ' ')
+  res.setHeader('content-type', type)
+  res.setHeader('content-disposition', `attachment; filename="${fileName.replace(/"/g, '')}"; filename*=UTF-8''${encoded}`)
+  fs.createReadStream(abs).pipe(res)
+})
+
 app.listen(PORT, HOST, () => {
   console.log(`API on http://${HOST}:${PORT} (scanning: ${PHOTOS_ROOT})`)
 })
