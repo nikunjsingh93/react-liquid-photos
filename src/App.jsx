@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
-import { FolderTree, RefreshCcw, Search, Image as ImageIcon, ChevronRight, ChevronDown, X, Maximize2, Download, Menu, Plus, Minus } from 'lucide-react'
+import { FolderTree, RefreshCcw, Search, Image as ImageIcon, ChevronRight, ChevronDown, X, Maximize2, Download, Menu, Plus, Minus, Info } from 'lucide-react'
 
 const BASE = import.meta?.env?.DEV ? 'http://127.0.0.1:5174' : ''
 const API = {
@@ -7,6 +7,10 @@ const API = {
   photos: async (params = {}, options = {}) => {
     const qs = new URLSearchParams(params).toString()
     const r = await fetch(`${BASE}/api/photos?${qs}`, options)
+    return await r.json()
+  },
+  meta: async (id, options = {}) => {
+    const r = await fetch(`${BASE}/api/meta/${id}`, options)
     return await r.json()
   },
   rescan: async () => (await fetch(`${BASE}/api/index`, { method: 'POST' })).json(),
@@ -83,12 +87,25 @@ function useMediaQuery(query) {
   return matches
 }
 
+// helpers
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return ''
+  const units = ['B','KB','MB','GB','TB']
+  let i = 0; let v = bytes
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
+  return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`
+}
+function ellipsizeWords(s, maxWords = 8) {
+  if (!s) return ''
+  const words = s.split(/\s+/)
+  return words.length > maxWords ? words.slice(0, maxWords).join(' ') + '…' : s
+}
+
 export default function App() {
   // Sidebar + layout
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(280)
   const isSmall = useMediaQuery('(max-width: 640px)')
-  const sidebarRef = useRef(null)
 
   // Search & folder
   const [tree, setTree] = useState(null)
@@ -108,6 +125,9 @@ export default function App() {
 
   // Viewer
   const [viewer, setViewer] = useState({ open: false, index: 0 })
+  const [infoOpen, setInfoOpen] = useState(false)
+  const metaCacheRef = useRef(new Map())
+  const [meta, setMeta] = useState(null)
 
   // Grid sizing
   const scrollRef = useRef(null)
@@ -119,7 +139,7 @@ export default function App() {
   const resizeRef = useRef(null)
   const [resizing, setResizing] = useState(false)
 
-  // Deduper and request control
+  // Deduper & loader control
   const photoIdsRef = useRef(new Set())
   const requestKey = useMemo(() => `${selected}||${debouncedQ}`, [selected, debouncedQ])
   const lastKeyRef = useRef(null)
@@ -135,6 +155,9 @@ export default function App() {
       setSelected(t.path) // usually ''
     })()
   }, [])
+
+  // Close drawer on large screens
+  useEffect(() => { if (!isSmall && sidebarOpen) setSidebarOpen(false) }, [isSmall, sidebarOpen])
 
   // Close resize popover when clicking outside
   useEffect(() => {
@@ -179,9 +202,6 @@ export default function App() {
     calc()
     return () => { ro.disconnect(); window.removeEventListener('resize', calc) }
   }, [tileMin, sidebarWidth, isSmall])
-
-  // Close drawer on large screens
-  useEffect(() => { if (!isSmall && sidebarOpen) setSidebarOpen(false) }, [isSmall, sidebarOpen])
 
   // SINGLE loader effect (first page + subsequent pages)
   useEffect(() => {
@@ -238,7 +258,7 @@ export default function App() {
     run()
     return () => { controller.abort(); inFlightRef.current = false; setLoading(false) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, requestKey, selected]) // do NOT include loading/hasMore to avoid loops
+  }, [page, requestKey, selected]) // avoid loops: no loading/hasMore in deps
 
   // Infinite scroll
   useEffect(() => {
@@ -274,21 +294,37 @@ export default function App() {
   }, [sidebarWidth, isSmall])
 
   // Viewer helpers
-  const openViewer = (idx) => setViewer({ open: true, index: idx })
-  const closeViewer = () => setViewer({ open: false, index: 0 })
+  const openViewer = (idx) => { setViewer({ open: true, index: idx }); setInfoOpen(false) }
+  const closeViewer = () => { setViewer({ open: false, index: 0 }); setInfoOpen(false) }
   const next = () => setViewer(v => ({ ...v, index: Math.min(v.index + 1, photos.length - 1) }))
   const prev = () => setViewer(v => ({ ...v, index: Math.max(v.index - 1, 0) }))
 
-  useEffect(() => {
-    const onKey = (e) => {
-      if (!viewer.open) return
-      if (e.key === 'Escape') closeViewer()
-      if (e.key === 'ArrowRight') next()
-      if (e.key === 'ArrowLeft') prev()
+  // Ensure metadata when info opens or photo changes
+  const ensureMeta = useCallback(async (id) => {
+    if (!id) return null
+    if (metaCacheRef.current.has(id)) {
+      const m = metaCacheRef.current.get(id)
+      setMeta(m)
+      return m
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [viewer.open, photos.length])
+    try {
+      const m = await API.meta(id)
+      metaCacheRef.current.set(id, m)
+      setMeta(m)
+      return m
+    } catch (e) {
+      console.error('meta fetch failed', e)
+      setMeta(null)
+      return null
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!viewer.open) return
+    const cur = photos[viewer.index]
+    if (!cur) return
+    if (infoOpen) { ensureMeta(cur.id) }
+  }, [viewer.open, viewer.index, infoOpen, photos, ensureMeta])
 
   const downloadActive = useCallback(async () => {
     const current = photos[viewer.index]
@@ -310,11 +346,14 @@ export default function App() {
     }
   }, [photos, viewer.index])
 
+  const currentPhoto = viewer.open ? photos[viewer.index] : null
+  const truncatedName = currentPhoto ? ellipsizeWords(currentPhoto.fname || '', 8) : ''
+
   return (
     <GlassShell>
       <div className="h-full min-h-0 grid" style={{ gridTemplateColumns: isSmall ? '1fr' : `${Math.round(sidebarWidth)}px 1fr` }}>
         {/* Sidebar (desktop) */}
-        <aside ref={sidebarRef} className="hidden sm:block relative border-r border-white/10 bg-slate-900">
+        <aside className="hidden sm:block relative border-r border-white/10 bg-slate-900">
           <div className="flex items-center gap-2 p-3 border-b border-white/10">
             <ImageIcon className="w-5 h-5 text-slate-200" />
             <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
@@ -451,34 +490,88 @@ export default function App() {
       )}
 
       {/* Fullscreen Viewer */}
-      {viewer.open && photos[viewer.index] && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
-          <button
-            className="absolute top-4 right-16 p-2 rounded bg-white/10 border border-white/10 hover:bg-white/20"
-            onClick={downloadActive}
-            title="Download"
-          >
-            <Download className="w-6 h-6 text-white" />
-          </button>
-          <button
-            className="absolute top-4 right-4 p-2 rounded bg-white/10 border border-white/10 hover:bg-white/20"
-            onClick={closeViewer}
-          >
-            <X className="w-6 h-6 text-white" />
-          </button>
-          <button
-            className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded bg-white/10 border border-white/10 hover:bg-white/20"
-            onClick={prev}
-          >◀</button>
-          <img
-            src={`${BASE}/media/${photos[viewer.index].id}`}
-            alt={photos[viewer.index].fname}
-            className="max-h-[90vh] max-w-[92vw] shadow-2xl border border-white/10"
-          />
-          <button
-            className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded bg-white/10 border border-white/10 hover:bg-white/20"
-            onClick={next}
-          >▶</button>
+      {viewer.open && currentPhoto && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-stretch">
+          {/* Center image area */}
+          <div className="relative flex-1 flex items-center justify-center">
+            {/* Top filename bar (ellipsized) */}
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 px-3 py-1.5 max-w-[80vw] rounded-full bg-black/40 border border-white/10 text-sm text-white whitespace-nowrap overflow-hidden text-ellipsis">
+              {truncatedName}
+            </div>
+
+            {/* Controls on the right-top */}
+            <div className="absolute top-4 right-4 flex items-center gap-2">
+              <button
+                className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                onClick={async () => { setInfoOpen(v => !v); if (!infoOpen) await ensureMeta(currentPhoto.id) }}
+                title="Info"
+              >
+                <Info className="w-6 h-6 text-white" />
+              </button>
+              <button
+                className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                onClick={downloadActive}
+                title="Download"
+              >
+                <Download className="w-6 h-6 text-white" />
+              </button>
+              <button
+                className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                onClick={closeViewer}
+                title="Close"
+              >
+                <X className="w-6 h-6 text-white" />
+              </button>
+            </div>
+
+            {/* Nav buttons */}
+            <button className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={prev}>◀</button>
+            <img
+              src={`${BASE}/media/${currentPhoto.id}`}
+              alt={currentPhoto.fname}
+              className="max-h-[90vh] rounded-xl shadow-2xl border border-white/10"
+              style={{ maxWidth: infoOpen ? 'calc(92vw - 360px)' : '92vw' }}
+            />
+            <button className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={next}>▶</button>
+          </div>
+
+          {/* Right info panel */}
+          {infoOpen && (
+            <aside className="w-[340px] max-w-[80vw] border-l border-white/10 bg-slate-900/95 backdrop-blur px-4 py-4 overflow-auto">
+              <div className="text-sm text-slate-200 font-semibold break-words">{meta?.fname || currentPhoto.fname}</div>
+              <div className="mt-1 text-xs text-slate-400 break-all">{meta?.folder}</div>
+              <div className="mt-2 text-xs text-slate-300">
+                <div>Size: <span className="text-slate-100">{formatBytes(meta?.size ?? currentPhoto.size)}</span></div>
+                {meta?.width && meta?.height && (
+                  <div>Dimensions: <span className="text-slate-100">{meta.width} × {meta.height}</span></div>
+                )}
+                {meta?.format && (
+                  <div>Format: <span className="text-slate-100 uppercase">{meta.format}</span></div>
+                )}
+              </div>
+
+              {/* EXIF */}
+              <div className="mt-4">
+                <div className="text-xs font-semibold text-slate-300 mb-2">EXIF</div>
+                {meta?.exif ? (
+                  <div className="space-y-1 text-xs text-slate-300">
+                    {meta.exif.DateTimeOriginal && <div>Date Taken: <span className="text-slate-100">{meta.exif.DateTimeOriginal}</span></div>}
+                    {(meta.exif.Make || meta.exif.Model) && <div>Camera: <span className="text-slate-100">{[meta.exif.Make, meta.exif.Model].filter(Boolean).join(' ')}</span></div>}
+                    {meta.exif.LensModel && <div>Lens: <span className="text-slate-100">{meta.exif.LensModel}</span></div>}
+                    {meta.exif.FNumber && <div>Aperture: <span className="text-slate-100">f/{meta.exif.FNumber}</span></div>}
+                    {meta.exif.ExposureTime && <div>Shutter: <span className="text-slate-100">{meta.exif.ExposureTime}s</span></div>}
+                    {meta.exif.ISO && <div>ISO: <span className="text-slate-100">{meta.exif.ISO}</span></div>}
+                    {meta.exif.FocalLength && <div>Focal: <span className="text-slate-100">{meta.exif.FocalLength}mm</span></div>}
+                    {(meta.exif.GPSLatitude != null && meta.exif.GPSLongitude != null) && (
+                      <div>GPS: <span className="text-slate-100">{meta.exif.GPSLatitude}, {meta.exif.GPSLongitude}</span></div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-xs text-slate-400">No EXIF available.</div>
+                )}
+              </div>
+            </aside>
+          )}
         </div>
       )}
     </GlassShell>

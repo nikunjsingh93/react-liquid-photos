@@ -141,7 +141,7 @@ function buildTree() {
     }
   }
 
-  // Fill counts using the SAME prefix logic as /api/photos (index-friendly; no LIKE)
+  // Counts via prefix range (same as /api/photos)
   const prefixCount = db.prepare(`SELECT COUNT(*) as c FROM images WHERE folder >= ? AND folder < ?`)
   const fillCounts = (node) => {
     const lower = node.path
@@ -243,6 +243,62 @@ app.get('/api/photos', (req, res) => {
     res.json({ items: rows, total })
   } catch (e) {
     console.error('/api/photos error', e)
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// On-demand metadata + EXIF (lazy exifr import)
+const metaCache = new Map() // id -> meta
+app.get('/api/meta/:id', async (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'bad id' })
+  if (metaCache.has(id)) return res.json(metaCache.get(id))
+
+  try {
+    const row = db.prepare('SELECT id, path, fname, folder, size, mtime, ctime FROM images WHERE id=?').get(id)
+    if (!row) return res.status(404).end()
+    const abs = path.join(PHOTOS_ROOT, row.path)
+
+    const meta = await sharp(abs).metadata().catch(() => ({}))
+    const base = {
+      id: row.id,
+      fname: row.fname,
+      folder: row.folder,
+      size: row.size,
+      mtime: row.mtime,
+      ctime: row.ctime,
+      width: meta.width || null,
+      height: meta.height || null,
+      format: meta.format || null,
+      exif: null,
+    }
+
+    // Try to parse EXIF (optional)
+    try {
+      const { default: exifr } = await import('exifr').catch(() => ({ default: null }))
+      if (exifr) {
+        const ex = await exifr.parse(abs, { tiff: true, ifd0: true, exif: true, gps: true })
+        if (ex) {
+          base.exif = {
+            DateTimeOriginal: ex.DateTimeOriginal?.toISOString?.() || ex.CreateDate?.toISOString?.() || null,
+            Make: ex.Make || null,
+            Model: ex.Model || null,
+            LensModel: ex.LensModel || null,
+            FNumber: ex.FNumber || null,
+            ExposureTime: ex.ExposureTime || null,
+            ISO: ex.ISO || null,
+            FocalLength: ex.FocalLength || null,
+            GPSLatitude: ex.latitude ?? ex.GPSLatitude ?? null,
+            GPSLongitude: ex.longitude ?? ex.GPSLongitude ?? null,
+          }
+        }
+      }
+    } catch {}
+
+    metaCache.set(id, base)
+    res.json(base)
+  } catch (e) {
+    console.error('/api/meta error', e)
     res.status(500).json({ error: e.message })
   }
 })
