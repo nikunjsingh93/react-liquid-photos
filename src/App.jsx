@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import React, { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffect } from 'react'
 import AutoSizer from 'react-virtualized-auto-sizer'
 import { FixedSizeGrid as Grid } from 'react-window'
 import { FolderTree, RefreshCcw, Search, Image as ImageIcon, ChevronRight, ChevronDown, X, Maximize2 } from 'lucide-react'
@@ -6,9 +6,9 @@ import { FolderTree, RefreshCcw, Search, Image as ImageIcon, ChevronRight, Chevr
 const BASE = import.meta?.env?.DEV ? 'http://127.0.0.1:5174' : ''
 const API = {
   tree: async () => (await fetch(`${BASE}/api/tree`)).json(),
-  photos: async (params = {}) => {
+  photos: async (params = {}, options = {}) => {
     const qs = new URLSearchParams(params).toString()
-    return (await fetch(`${BASE}/api/photos?${qs}`)).json()
+    return (await fetch(`${BASE}/api/photos?${qs}`, options)).json()
   },
   rescan: async () => (await fetch(`${BASE}/api/index`, { method: 'POST' })).json(),
 }
@@ -56,7 +56,7 @@ function TreeNode({ node, depth, open, toggle, select, selected }) {
           onClick={() => select(node.path)}
         >
           <button
-            onClick={(e) => { e.stopPropagation(); if (hasChildren) toggle(node.path) }}
+            onClick={(e) => { e.stopPropagation(); if (hasChildren) toggle(node.path); select(node.path) }}
             className="p-0.5 rounded hover:bg-white/10"
           >
             {hasChildren ? (isOpen ? <ChevronDown className="w-4 h-4"/> : <ChevronRight className="w-4 h-4"/>) : <span className="w-4 h-4" />}
@@ -95,7 +95,64 @@ export default function App() {
 
   useEffect(() => { (async () => { const t = await API.tree(); setTree(t); setOpen(new Set([t.path])); setSelected(t.path) })() }, [])
 
+  // Compose a stable request key for cancelation and sequencing logic
+  const requestKey = useMemo(() => `${selected}||${debouncedQ}`, [selected, debouncedQ])
+  const requestControllerRef = useRef(null)
+  const loadedFirstPageKeyRef = useRef(null)
+
+  // When the key changes (folder or query), cancel any in-flight requests and create a fresh controller
   useEffect(() => {
+    if (requestControllerRef.current) {
+      try { requestControllerRef.current.abort() } catch {}
+    }
+    requestControllerRef.current = new AbortController()
+    return () => {}
+  }, [requestKey])
+
+  // Abort on unmount
+  useEffect(() => {
+    return () => { try { requestControllerRef.current?.abort() } catch {} }
+  }, [])
+
+  // Eagerly load the first page whenever the folder/query key changes
+  useEffect(() => {
+    if (selected == null) return
+    let alive = true
+    async function loadFirstPage() {
+      // Reset state synchronously for UX
+      setPhotos([])
+      setPage(1)
+      setHasMore(true)
+      setError('')
+      setInitialLoaded(false)
+      setLoading(true)
+      try {
+        const r = await API.photos(
+          { folder: selected, q: debouncedQ, page: 1, pageSize: 200, _t: Date.now() },
+          { signal: requestControllerRef.current?.signal }
+        )
+        if (!alive) return
+        setTotal(Number(r.total || 0))
+        const items = r.items || []
+        setPhotos(items)
+        const more = items.length < Number(r.total || items.length)
+        setHasMore(more)
+        if (items.length > 0) setInitialLoaded(true)
+        loadedFirstPageKeyRef.current = requestKey
+      } catch (e) {
+        if (!alive || e?.name === 'AbortError') return
+        console.error('/photos first-page fetch failed', e)
+        setError(e?.message || 'Failed to load photos')
+      } finally {
+        if (alive) setLoading(false)
+      }
+    }
+    loadFirstPage()
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestKey])
+
+  useLayoutEffect(() => {
     setPhotos([])
     setPage(1)
     setHasMore(true)
@@ -103,16 +160,20 @@ export default function App() {
     setInitialLoaded(false)
   }, [debouncedQ, selected])
 
-  // Robust loader: handles errors, cancels stale requests, and always clears loading
+  // Loader for subsequent pages (and fallback). Skips if first page was eagerly loaded for current key.
   useEffect(() => {
-    const controller = new AbortController()
     let alive = true
     async function load() {
-      if (!hasMore || loading || !selected) return
+      const canLoad = page === 1 ? true : hasMore
+      if (!canLoad || selected == null) return
+      if (page === 1 && loadedFirstPageKeyRef.current === requestKey) return
       setLoading(true)
       try {
         console.log('Loading photos …', { selected, page, q: debouncedQ })
-        const r = await API.photos({ folder: selected, q: debouncedQ, page, pageSize: 200, _t: Date.now() })
+        const r = await API.photos(
+          { folder: selected, q: debouncedQ, page, pageSize: 200, _t: Date.now() },
+          { signal: requestControllerRef.current?.signal }
+        )
         if (!alive) return
         setTotal(Number(r.total || 0))
         setPhotos(prev => {
@@ -123,7 +184,7 @@ export default function App() {
         if ((r.items || []).length > 0) setInitialLoaded(true)
         setError('')
       } catch (e) {
-        if (!alive) return
+        if (!alive || e?.name === 'AbortError') return
         console.error('/photos fetch failed', e)
         setError(e?.message || 'Failed to load photos')
       } finally {
@@ -131,9 +192,9 @@ export default function App() {
       }
     }
     load()
-    return () => { alive = false; controller.abort() }
+    return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedQ, selected])
+  }, [page, debouncedQ, selected, hasMore, requestKey])
 
   const toggle = useCallback((p) => setOpen(s => { const n = new Set(s); n.has(p) ? n.delete(p) : n.add(p); return n }), [])
   const select = useCallback((p) => setSelected(p), [])
