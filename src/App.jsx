@@ -1,6 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffect } from 'react'
-import AutoSizer from 'react-virtualized-auto-sizer'
-import { FixedSizeGrid as Grid } from 'react-window'
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { FolderTree, RefreshCcw, Search, Image as ImageIcon, ChevronRight, ChevronDown, X, Maximize2, Download, Menu, Plus, Minus } from 'lucide-react'
 
 const BASE = import.meta?.env?.DEV ? 'http://127.0.0.1:5174' : ''
@@ -8,16 +6,15 @@ const API = {
   tree: async () => (await fetch(`${BASE}/api/tree`)).json(),
   photos: async (params = {}, options = {}) => {
     const qs = new URLSearchParams(params).toString()
-    return (await fetch(`${BASE}/api/photos?${qs}`, options)).json()
+    const r = await fetch(`${BASE}/api/photos?${qs}`, options)
+    return await r.json()
   },
   rescan: async () => (await fetch(`${BASE}/api/index`, { method: 'POST' })).json(),
 }
 
 const GlassShell = ({ children }) => (
   <div className="h-full w-full bg-slate-900 text-slate-100">
-    <div className="h-full">
-      {children}
-    </div>
+    <div className="h-full">{children}</div>
   </div>
 )
 
@@ -57,7 +54,7 @@ function TreeNode({ node, depth, open, toggle, select, selected }) {
             onClick={(e) => { e.stopPropagation(); if (hasChildren) toggle(node.path) }}
             className="p-0.5 rounded hover:bg-white/10"
           >
-            {hasChildren ? (isOpen ? <ChevronDown className="w-4 h-4"/> : <ChevronRight className="w-4 h-4"/>) : <span className="w-4 h-4" />}
+            {hasChildren ? (isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />) : <span className="w-4 h-4" />}
           </button>
           <span className="truncate text-sm/5">{node.name}</span>
           <span className="ml-auto text-xs text-slate-400">{node.count ?? 0}</span>
@@ -87,12 +84,20 @@ function useMediaQuery(query) {
 }
 
 export default function App() {
+  // Sidebar + layout
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(280)
+  const isSmall = useMediaQuery('(max-width: 640px)')
+  const sidebarRef = useRef(null)
+
+  // Search & folder
   const [tree, setTree] = useState(null)
   const [open, setOpen] = useState(new Set())
-  const [selected, setSelected] = useState('')
+  const [selected, setSelected] = useState('') // '' → All Media
   const [query, setQuery] = useState('')
   const debouncedQ = useDebouncedValue(query, 300)
 
+  // Photos & paging
   const [photos, setPhotos] = useState([])
   const [page, setPage] = useState(1)
   const [hasMore, setHasMore] = useState(true)
@@ -101,23 +106,37 @@ export default function App() {
   const [error, setError] = useState('')
   const [initialLoaded, setInitialLoaded] = useState(false)
 
+  // Viewer
   const [viewer, setViewer] = useState({ open: false, index: 0 })
-  const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [sidebarWidth, setSidebarWidth] = useState(280)
-  const sidebarRef = useRef(null)
-  const isSmall = useMediaQuery('(max-width: 640px)')
-  const photoIdsRef = useRef(new Set())
-  const [resizeOpen, setResizeOpen] = useState(false)
+
+  // Grid sizing
+  const scrollRef = useRef(null)
+  const sentinelRef = useRef(null)
   const [tileMin, setTileMin] = useState(120)
-  const resizeRef = useRef(null)
-  const [resizing, setResizing] = useState(false)
   const [gridCols, setGridCols] = useState(1)
   const [tileSize, setTileSize] = useState(120)
+  const [resizeOpen, setResizeOpen] = useState(false)
+  const resizeRef = useRef(null)
+  const [resizing, setResizing] = useState(false)
 
-  // Ensure drawer is closed on mount
-  useEffect(() => { setSidebarOpen(false) }, [])
+  // Deduper and request control
+  const photoIdsRef = useRef(new Set())
+  const requestKey = useMemo(() => `${selected}||${debouncedQ}`, [selected, debouncedQ])
+  const lastKeyRef = useRef(null)
+  const controllerRef = useRef(null)
+  const inFlightRef = useRef(false)
 
-  // Close resize popover on outside click
+  // Initial tree
+  useEffect(() => {
+    (async () => {
+      const t = await API.tree()
+      setTree(t)
+      setOpen(new Set([t.path]))
+      setSelected(t.path) // usually ''
+    })()
+  }, [])
+
+  // Close resize popover when clicking outside
   useEffect(() => {
     if (!resizeOpen) return
     const onDoc = (e) => { if (!resizeRef.current) return; if (!resizeRef.current.contains(e.target)) setResizeOpen(false) }
@@ -125,18 +144,18 @@ export default function App() {
     return () => document.removeEventListener('mousedown', onDoc)
   }, [resizeOpen])
 
+  // Resize grid controls
   const adjustTile = useCallback((delta) => {
     setResizing(true)
     setTileMin(v => Math.max(60, Math.min(640, v + delta)))
   }, [])
-
   useEffect(() => {
     if (!resizing) return
     const t = setTimeout(() => setResizing(false), 250)
     return () => clearTimeout(t)
   }, [tileMin, resizing])
 
-  // Recompute grid columns and exact tile size to eliminate right-side gaps
+  // Compute grid columns & tile size
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
@@ -159,129 +178,69 @@ export default function App() {
     window.addEventListener('resize', calc)
     calc()
     return () => { ro.disconnect(); window.removeEventListener('resize', calc) }
-  }, [tileMin, isSmall, sidebarWidth])
+  }, [tileMin, sidebarWidth, isSmall])
 
-  useEffect(() => { (async () => { const t = await API.tree(); setTree(t); setOpen(new Set([t.path])); setSelected(t.path) })() }, [])
-
-  // Compose a stable request key for cancelation and sequencing logic
-  const requestKey = useMemo(() => `${selected}||${debouncedQ}`, [selected, debouncedQ])
-  const requestControllerRef = useRef(null)
-  const loadedFirstPageKeyRef = useRef(null)
-
-  // When the key changes (folder or query), cancel any in-flight requests and create a fresh controller
-  useEffect(() => {
-    if (requestControllerRef.current) {
-      try { requestControllerRef.current.abort() } catch {}
-    }
-    requestControllerRef.current = new AbortController()
-    return () => {}
-  }, [requestKey])
-
-  // Abort on unmount
-  useEffect(() => {
-    return () => { try { requestControllerRef.current?.abort() } catch {} }
-  }, [])
-
-  // Eagerly load the first page whenever the folder/query key changes
-  useEffect(() => {
-    if (selected == null) return
-    let alive = true
-    async function loadFirstPage() {
-      // Reset state synchronously for UX
-      setPhotos([])
-      setPage(1)
-      setHasMore(true)
-      setError('')
-      setInitialLoaded(false)
-      setLoading(true)
-      photoIdsRef.current = new Set()
-      try {
-        const r = await API.photos(
-          { folder: selected, q: debouncedQ, page: 1, pageSize: 200, _t: Date.now() },
-          { signal: requestControllerRef.current?.signal }
-        )
-        if (!alive) return
-        setTotal(Number(r.total || 0))
-        const items = r.items || []
-        const unique = []
-        for (const it of items) {
-          if (!photoIdsRef.current.has(it.id)) { photoIdsRef.current.add(it.id); unique.push(it) }
-        }
-        setPhotos(unique)
-        const more = unique.length < Number(r.total || unique.length)
-        setHasMore(more)
-        if (unique.length > 0) setInitialLoaded(true)
-        loadedFirstPageKeyRef.current = requestKey
-      } catch (e) {
-        if (!alive || e?.name === 'AbortError') return
-        console.error('/photos first-page fetch failed', e)
-        setError(e?.message || 'Failed to load photos')
-      } finally {
-        if (alive) setLoading(false)
-      }
-    }
-    loadFirstPage()
-    return () => { alive = false }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requestKey])
-
-  useLayoutEffect(() => {
-    setPhotos([])
-    setPage(1)
-    setHasMore(true)
-    setError('')
-    setInitialLoaded(false)
-  }, [debouncedQ, selected])
-
-  // Loader for subsequent pages (and fallback). Skips if first page was eagerly loaded for current key.
-  useEffect(() => {
-    let alive = true
-    async function load() {
-      const canLoad = page === 1 ? true : hasMore
-      if (!canLoad || selected == null) return
-      if (page === 1 && loadedFirstPageKeyRef.current === requestKey) return
-      setLoading(true)
-      try {
-        console.log('Loading photos …', { selected, page, q: debouncedQ })
-        const r = await API.photos(
-          { folder: selected, q: debouncedQ, page, pageSize: 200, _t: Date.now() },
-          { signal: requestControllerRef.current?.signal }
-        )
-        if (!alive) return
-        setTotal(Number(r.total || 0))
-        setPhotos(prev => {
-          const incoming = r.items || []
-          const filtered = []
-          for (const it of incoming) {
-            if (!photoIdsRef.current.has(it.id)) { photoIdsRef.current.add(it.id); filtered.push(it) }
-          }
-          const next = filtered.length ? [...prev, ...filtered] : prev
-          setHasMore(next.length < Number(r.total || next.length))
-          return next
-        })
-        if ((r.items || []).length > 0) setInitialLoaded(true)
-        setError('')
-      } catch (e) {
-        if (!alive || e?.name === 'AbortError') return
-        console.error('/photos fetch failed', e)
-        setError(e?.message || 'Failed to load photos')
-      } finally {
-        if (alive) setLoading(false)
-      }
-    }
-    load()
-    return () => { alive = false }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedQ, selected, hasMore, requestKey])
-
-  // Close drawer when switching to large screens to avoid stuck overlay
+  // Close drawer on large screens
   useEffect(() => { if (!isSmall && sidebarOpen) setSidebarOpen(false) }, [isSmall, sidebarOpen])
 
-  const toggle = useCallback((p) => setOpen(s => { const n = new Set(s); n.has(p) ? n.delete(p) : n.add(p); return n }), [])
-  const select = useCallback((p) => setSelected(p), [])
+  // SINGLE loader effect (first page + subsequent pages)
+  useEffect(() => {
+    const controller = new AbortController()
+    controllerRef.current?.abort()
+    controllerRef.current = controller
 
-  const sentinelRef = useRef(null)
-  const scrollRef = useRef(null)
+    const run = async () => {
+      // New folder/query? reset paging & dedupe
+      if (lastKeyRef.current !== requestKey) {
+        lastKeyRef.current = requestKey
+        photoIdsRef.current = new Set()
+        setPhotos([])
+        setPage(1)
+        setHasMore(true)
+        setError('')
+        setInitialLoaded(false)
+        setTotal(0)
+      }
+
+      if (inFlightRef.current) return
+      if (!hasMore && page > 1) return
+
+      inFlightRef.current = true
+      setLoading(true)
+      try {
+        const r = await API.photos(
+          { folder: selected, q: debouncedQ, page, pageSize: 200, _t: Date.now() },
+          { signal: controller.signal }
+        )
+        setTotal(Number(r.total || 0))
+
+        const incoming = r.items || []
+        const filtered = []
+        for (const it of incoming) {
+          if (!photoIdsRef.current.has(it.id)) { photoIdsRef.current.add(it.id); filtered.push(it) }
+        }
+
+        setPhotos(prev => page === 1 ? filtered : [...prev, ...filtered])
+        const nextLen = (page === 1 ? filtered.length : (photos.length + filtered.length))
+        setHasMore(nextLen < Number(r.total || nextLen))
+        if (incoming.length > 0) setInitialLoaded(true)
+      } catch (e) {
+        if (e?.name !== 'AbortError') {
+          console.error('/api/photos failed', e)
+          setError(e?.message || 'Failed to load photos')
+        }
+      } finally {
+        inFlightRef.current = false
+        setLoading(false)
+      }
+    }
+
+    run()
+    return () => { controller.abort(); inFlightRef.current = false; setLoading(false) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, requestKey, selected]) // do NOT include loading/hasMore to avoid loops
+
+  // Infinite scroll
   useEffect(() => {
     if (!initialLoaded) return
     const io = new IntersectionObserver((ents) => {
@@ -291,10 +250,45 @@ export default function App() {
     return () => io.disconnect()
   }, [initialLoaded])
 
+  // Sidebar expand/collapse
+  const toggle = useCallback((p) => setOpen(s => { const n = new Set(s); n.has(p) ? n.delete(p) : n.add(p); return n }), [])
+  const select = useCallback((p) => setSelected(p), [])
+  const onResizePointerDown = useCallback((e) => {
+    if (isSmall) return
+    e.preventDefault()
+    const startX = e.clientX
+    const start = sidebarWidth
+    document.body.style.cursor = 'col-resize'
+    const onMove = (ev) => {
+      const delta = ev.clientX - startX
+      const next = Math.max(200, Math.min(560, start + delta))
+      setSidebarWidth(next)
+    }
+    const onUp = () => {
+      document.removeEventListener('pointermove', onMove)
+      document.removeEventListener('pointerup', onUp)
+      document.body.style.cursor = ''
+    }
+    document.addEventListener('pointermove', onMove)
+    document.addEventListener('pointerup', onUp)
+  }, [sidebarWidth, isSmall])
+
+  // Viewer helpers
   const openViewer = (idx) => setViewer({ open: true, index: idx })
   const closeViewer = () => setViewer({ open: false, index: 0 })
   const next = () => setViewer(v => ({ ...v, index: Math.min(v.index + 1, photos.length - 1) }))
   const prev = () => setViewer(v => ({ ...v, index: Math.max(v.index - 1, 0) }))
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!viewer.open) return
+      if (e.key === 'Escape') closeViewer()
+      if (e.key === 'ArrowRight') next()
+      if (e.key === 'ArrowLeft') prev()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [viewer.open, photos.length])
 
   const downloadActive = useCallback(async () => {
     const current = photos[viewer.index]
@@ -316,42 +310,12 @@ export default function App() {
     }
   }, [photos, viewer.index])
 
-  const onResizePointerDown = useCallback((e) => {
-    if (isSmall) return
-    e.preventDefault()
-    const startX = e.clientX
-    const startWidth = sidebarWidth
-    document.body.style.cursor = 'col-resize'
-    const onMove = (ev) => {
-      const delta = ev.clientX - startX
-      const next = Math.max(200, Math.min(560, startWidth + delta))
-      setSidebarWidth(next)
-    }
-    const onUp = () => {
-      document.removeEventListener('pointermove', onMove)
-      document.removeEventListener('pointerup', onUp)
-      document.body.style.cursor = ''
-    }
-    document.addEventListener('pointermove', onMove)
-    document.addEventListener('pointerup', onUp)
-  }, [sidebarWidth, isSmall])
-
-  useEffect(() => {
-    const onKey = (e) => {
-      if (!viewer.open) return
-      if (e.key === 'Escape') closeViewer()
-      if (e.key === 'ArrowRight') next()
-      if (e.key === 'ArrowLeft') prev()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [viewer.open, photos.length])
-
   return (
     <GlassShell>
       <div className="h-full min-h-0 grid" style={{ gridTemplateColumns: isSmall ? '1fr' : `${Math.round(sidebarWidth)}px 1fr` }}>
+        {/* Sidebar (desktop) */}
         <aside ref={sidebarRef} className="hidden sm:block relative border-r border-white/10 bg-slate-900">
-            <div className="flex items-center gap-2 p-3 border-b border-white/10">
+          <div className="flex items-center gap-2 p-3 border-b border-white/10">
             <ImageIcon className="w-5 h-5 text-slate-200" />
             <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
             <button
@@ -372,6 +336,8 @@ export default function App() {
             aria-label="Resize sidebar"
           />
         </aside>
+
+        {/* Main */}
         <main className="flex flex-col min-h-0">
           <header className="relative z-20 p-3 border-b border-white/10 bg-slate-900">
             <div className="flex items-center gap-3">
@@ -423,7 +389,9 @@ export default function App() {
                   </div>
                 )}
               </div>
-              <div className="text-xs text-slate-300 shrink-0 px-2 py-1 rounded bg-white/5 border border-white/10">{total.toLocaleString()} photos</div>
+              <div className="text-xs text-slate-300 shrink-0 px-2 py-1 rounded bg-white/5 border border-white/10">
+                {total.toLocaleString()} photos
+              </div>
             </div>
           </header>
 
@@ -438,7 +406,8 @@ export default function App() {
                 {error}
               </div>
             )}
-            {/* Responsive CSS grid with lazy images; virtualized grid could be swapped in if desired */}
+
+            {/* Grid */}
             <div className="grid gap-1 sm:gap-1.5" style={{ gridTemplateColumns: `repeat(${gridCols}, ${tileSize}px)` }}>
               {photos.map((p, i) => (
                 <button
@@ -456,6 +425,7 @@ export default function App() {
                 </button>
               ))}
             </div>
+
             <div ref={sentinelRef} className="h-20" />
             {loading && <div className="text-center text-slate-400 py-4">Loading…</div>}
           </section>
@@ -480,25 +450,35 @@ export default function App() {
         </div>
       )}
 
-      {/* Mobile floating hamburger button */}
-      {/* Floating hamburger removed; header now holds it on mobile */}
-
       {/* Fullscreen Viewer */}
       {viewer.open && photos[viewer.index] && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
           <button
-            className="absolute top-4 right-16 p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+            className="absolute top-4 right-16 p-2 rounded bg-white/10 border border-white/10 hover:bg-white/20"
             onClick={downloadActive}
             title="Download"
           >
             <Download className="w-6 h-6 text-white" />
           </button>
-          <button className="absolute top-4 right-4 p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={closeViewer}>
+          <button
+            className="absolute top-4 right-4 p-2 rounded bg-white/10 border border-white/10 hover:bg-white/20"
+            onClick={closeViewer}
+          >
             <X className="w-6 h-6 text-white" />
           </button>
-          <button className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={prev}>◀</button>
-          <img src={`${BASE}/media/${photos[viewer.index].id}`} alt={photos[viewer.index].fname} className="max-h-[90vh] max-w-[92vw] shadow-2xl border border-white/10" />
-          <button className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={next}>▶</button>
+          <button
+            className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded bg-white/10 border border-white/10 hover:bg-white/20"
+            onClick={prev}
+          >◀</button>
+          <img
+            src={`${BASE}/media/${photos[viewer.index].id}`}
+            alt={photos[viewer.index].fname}
+            className="max-h-[90vh] max-w-[92vw] shadow-2xl border border-white/10"
+          />
+          <button
+            className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded bg-white/10 border border-white/10 hover:bg-white/20"
+            onClick={next}
+          >▶</button>
         </div>
       )}
     </GlassShell>

@@ -11,6 +11,7 @@ import Database from 'better-sqlite3'
 import sharp from 'sharp'
 import mime from 'mime-types'
 
+/* ---------- config ---------- */
 const ROOT = process.cwd()
 const PHOTOS_ROOT = process.env.PHOTOS_PATH
 if (!PHOTOS_ROOT) {
@@ -28,30 +29,30 @@ const DB_CACHE_SIZE_MB = Number(process.env.DB_CACHE_SIZE_MB || 256)
 fs.mkdirSync(CACHE_DIR, { recursive: true })
 fs.mkdirSync(THUMBS_DIR, { recursive: true })
 
-// Helpers
+/* ---------- helpers ---------- */
 const toPosix = (p) => p.split(path.sep).join('/')
 const rel = (abs) => toPosix(path.relative(PHOTOS_ROOT, abs))
 const hashPath = (p) => crypto.createHash('sha1').update(p).digest('hex')
 
-// DB setup
+/* ---------- db ---------- */
 const db = new Database(DB_PATH)
 db.pragma('journal_mode = WAL')
 db.pragma('synchronous = NORMAL')
 db.pragma('temp_store = MEMORY')
 db.pragma(`cache_size = -${DB_CACHE_SIZE_MB * 1024}`)
 
-// schema
 db.exec(`
 CREATE TABLE IF NOT EXISTS images (
   id INTEGER PRIMARY KEY,
-  path TEXT UNIQUE NOT NULL,
-  fname TEXT NOT NULL,
+  path   TEXT UNIQUE NOT NULL,
+  fname  TEXT NOT NULL,
   folder TEXT NOT NULL,
-  ctime INTEGER,
-  mtime INTEGER,
-  size INTEGER
+  ctime  INTEGER,
+  mtime  INTEGER,
+  size   INTEGER
 );
-CREATE INDEX IF NOT EXISTS idx_images_folder ON images(folder);
+CREATE INDEX IF NOT EXISTS idx_images_folder        ON images(folder);
+CREATE INDEX IF NOT EXISTS idx_images_folder_mtime  ON images(folder, mtime DESC);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS images_fts USING fts5(
   fname, folder, path, content='images', content_rowid='id'
@@ -72,12 +73,20 @@ END;
 const insertStmt = db.prepare(`INSERT OR IGNORE INTO images(path, fname, folder, ctime, mtime, size) VALUES(?,?,?,?,?,?)`)
 const updateStmt = db.prepare(`UPDATE images SET ctime=?, mtime=?, size=? WHERE path=?`)
 
-const IMG_EXT = new Set(['.jpg','.jpeg','.png','.webp','.avif','.gif','.tif','.tiff','.bmp','.heic','.heif','.dng','.arw','.cr2','.raf','.nef'])
+const IMG_EXT = new Set([
+  '.jpg','.jpeg','.png','.webp','.avif','.gif',
+  '.tif','.tiff','.bmp','.heic','.heif',
+  '.dng','.arw','.cr2','.raf','.nef'
+])
 
+/* ---------- indexer ---------- */
 async function scanAndIndex() {
   console.log('[index] scanning…')
   const t0 = Date.now()
-  const entries = await fg(['**/*'], { cwd: PHOTOS_ROOT, dot: false, onlyFiles: true, unique: true, absolute: true, suppressErrors: true })
+  const entries = await fg(['**/*'], {
+    cwd: PHOTOS_ROOT, dot: false, onlyFiles: true,
+    unique: true, absolute: true, suppressErrors: true
+  })
   let count = 0
   const tx = db.transaction((batch) => { for (const b of batch) b() })
   const ops = []
@@ -87,7 +96,7 @@ async function scanAndIndex() {
     try {
       const st = await fsp.stat(abs)
       const r = rel(abs)
-      const folder = toPosix(path.dirname(r))
+      const folder = toPosix(path.dirname(r)) // root files ⇒ '.'
       const fname = path.basename(abs)
       ops.push(() => insertStmt.run(r, fname, folder, Math.floor(st.ctimeMs), Math.floor(st.mtimeMs), st.size))
       count++
@@ -97,13 +106,10 @@ async function scanAndIndex() {
   console.log(`[index] done: ${count.toLocaleString()} files in ${((Date.now()-t0)/1000).toFixed(1)}s`)
 }
 
-async function ensureThumb(absPath, id) {
+async function ensureThumb(absPath) {
   const h = hashPath(absPath)
   const out = path.join(THUMBS_DIR, `${h}.webp`)
-  try {
-    await fsp.access(out)
-    return out
-  } catch {}
+  try { await fsp.access(out); return out } catch {}
   try {
     await sharp(absPath).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
     return out
@@ -113,11 +119,14 @@ async function ensureThumb(absPath, id) {
   }
 }
 
+/* ---------- tree ---------- */
 function buildTree() {
-  const rows = db.prepare(`SELECT folder, COUNT(*) as count FROM images GROUP BY folder`).all()
+  // Build nodes for every folder path we know
+  const rows = db.prepare(`SELECT DISTINCT folder FROM images`).all()
   const root = { name: path.basename(PHOTOS_ROOT) || '/', path: '', count: 0, children: [] }
   const map = new Map([['', root]])
-  for (const { folder, count } of rows) {
+
+  for (const { folder } of rows) {
     const segs = folder === '.' ? [] : folder.split('/')
     let curPath = ''
     let parent = root
@@ -130,32 +139,29 @@ function buildTree() {
       }
       parent = map.get(curPath)
     }
-    // counts will be filled via prefix query later; ignore this row's count
   }
-  // Fill counts using the same logic as header (prefix count per folder)
-  const prefixCount = db.prepare(`SELECT COUNT(*) as c FROM images WHERE folder LIKE ? || '%'`)
+
+  // Fill counts using the SAME prefix logic as /api/photos (index-friendly; no LIKE)
+  const prefixCount = db.prepare(`SELECT COUNT(*) as c FROM images WHERE folder >= ? AND folder < ?`)
   const fillCounts = (node) => {
-    node.count = prefixCount.get(node.path).c
+    const lower = node.path
+    const upper = node.path + '\uFFFF'
+    node.count = prefixCount.get(lower, upper).c
     node.children.forEach(fillCounts)
   }
   fillCounts(root)
-  // sort children alphabetically
+
+  // Sort children
   const sortRec = (n) => { n.children.sort((a,b)=>a.name.localeCompare(b.name)); n.children.forEach(sortRec) }
   sortRec(root)
   return root
 }
 
-async function rescan() {
-  await scanAndIndex()
-}
-
-// initial index if DB is empty
+/* ---------- initial index ---------- */
 const empty = db.prepare('SELECT COUNT(*) as c FROM images').get().c === 0
-if (empty) {
-  await scanAndIndex()
-}
+if (empty) { await scanAndIndex() }
 
-// Watch for changes
+/* ---------- watch filesystem ---------- */
 chokidar.watch(PHOTOS_ROOT, { ignoreInitial: true, depth: 99 })
   .on('add', async (abs) => {
     const ext = path.extname(abs).toLowerCase(); if (!IMG_EXT.has(ext)) return
@@ -171,6 +177,7 @@ chokidar.watch(PHOTOS_ROOT, { ignoreInitial: true, depth: 99 })
     db.prepare('DELETE FROM images WHERE path=?').run(rel(abs))
   })
 
+/* ---------- api ---------- */
 const app = express()
 app.use(cors())
 app.use(express.json())
@@ -179,44 +186,69 @@ app.get('/api/tree', (req, res) => {
   try { res.json(buildTree()) } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// Prefix-range query (no LIKE). Handles subfolders and avoids wildcard issues with _ and %
 app.get('/api/photos', (req, res) => {
-  const folder = (req.query.folder || '').toString()
+  const folder = (req.query.folder || '').toString()        // '' => All Media
   const q = (req.query.q || '').toString().trim()
   const page = Math.max(1, parseInt(req.query.page || '1', 10))
   const pageSize = Math.max(1, Math.min(500, parseInt(req.query.pageSize || '200', 10)))
   const offset = (page - 1) * pageSize
 
+  const lower = folder
+  const upper = folder + '\uFFFF' // all strings starting with `folder`
+
   try {
     let rows = []
     let total = 0
+
     if (q) {
-      // FTS: search by file name + path + folder
       const term = q.replace(/\s+/g, ' ')
-      const stmt = db.prepare(`
-        SELECT i.id, i.fname, i.folder FROM images i
+      rows = db.prepare(`
+        SELECT i.id, i.fname, i.folder, i.mtime, i.size
+        FROM images i
         JOIN images_fts f ON f.rowid = i.id
-        WHERE f MATCH ? AND i.folder LIKE ? || '%'
+        WHERE f MATCH ?
+          AND i.folder >= ?
+          AND i.folder < ?
         ORDER BY i.mtime DESC, i.id DESC
-        LIMIT ? OFFSET ?`)
-      rows = stmt.all(term, folder, pageSize, offset)
+        LIMIT ? OFFSET ?
+      `).all(term, lower, upper, pageSize, offset)
+
       total = db.prepare(`
-        SELECT COUNT(*) as c FROM images i
+        SELECT COUNT(*) AS c
+        FROM images i
         JOIN images_fts f ON f.rowid = i.id
-        WHERE f MATCH ? AND i.folder LIKE ? || '%'`).get(term, folder).c
+        WHERE f MATCH ?
+          AND i.folder >= ?
+          AND i.folder < ?
+      `).get(term, lower, upper).c
     } else {
       rows = db.prepare(`
-        SELECT id, fname, folder FROM images WHERE folder LIKE ? || '%'
-        ORDER BY mtime DESC, id DESC LIMIT ? OFFSET ?`).all(folder, pageSize, offset)
-      total = db.prepare(`SELECT COUNT(*) as c FROM images WHERE folder LIKE ? || '%'`).get(folder).c
+        SELECT id, fname, folder, mtime, size
+        FROM images
+        WHERE folder >= ?
+          AND folder < ?
+        ORDER BY mtime DESC, id DESC
+        LIMIT ? OFFSET ?
+      `).all(lower, upper, pageSize, offset)
+
+      total = db.prepare(`
+        SELECT COUNT(*) AS c
+        FROM images
+        WHERE folder >= ?
+          AND folder < ?
+      `).get(lower, upper).c
     }
+
     res.json({ items: rows, total })
   } catch (e) {
+    console.error('/api/photos error', e)
     res.status(500).json({ error: e.message })
   }
 })
 
 app.post('/api/index', async (req, res) => {
-  try { await rescan(); res.json({ ok: true }) } catch (e) { res.status(500).json({ error: e.message }) }
+  try { await scanAndIndex(); res.json({ ok: true }) } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
 app.get('/thumb/:id', async (req, res) => {
@@ -224,7 +256,7 @@ app.get('/thumb/:id', async (req, res) => {
   const row = db.prepare('SELECT path FROM images WHERE id=?').get(id)
   if (!row) return res.status(404).end()
   const abs = path.join(PHOTOS_ROOT, row.path)
-  const thumb = await ensureThumb(abs, id)
+  const thumb = await ensureThumb(abs)
   if (!thumb) return res.status(500).end()
   res.setHeader('content-type', 'image/webp')
   fs.createReadStream(thumb).pipe(res)
@@ -240,17 +272,16 @@ app.get('/media/:id', (req, res) => {
   fs.createReadStream(abs).pipe(res)
 })
 
-// Download original with correct filename+extension
+// Optional: force-download with filename
 app.get('/download/:id', (req, res) => {
   const id = Number(req.params.id)
   const row = db.prepare('SELECT path, fname FROM images WHERE id=?').get(id)
   if (!row) return res.status(404).end()
   const abs = path.join(PHOTOS_ROOT, row.path)
   const type = mime.lookup(abs) || 'application/octet-stream'
-  const fileName = row.fname || path.basename(abs)
-  const encoded = encodeURIComponent(fileName).replace(/%20/g, ' ')
+  const name = row.fname || path.basename(abs)
   res.setHeader('content-type', type)
-  res.setHeader('content-disposition', `attachment; filename="${fileName.replace(/"/g, '')}"; filename*=UTF-8''${encoded}`)
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`)
   fs.createReadStream(abs).pipe(res)
 })
 
