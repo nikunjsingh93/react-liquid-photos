@@ -101,6 +101,9 @@ function ellipsizeWords(s, maxWords = 8) {
   return words.length > maxWords ? words.slice(0, maxWords).join(' ') + '…' : s
 }
 
+const HEADER_H = 56 // viewer header height in px (mobile & desktop)
+const MOBILE_INFO_VH = 40 // bottom sheet height in vh when info is open
+
 export default function App() {
   // Sidebar + layout
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -302,6 +305,7 @@ export default function App() {
   // Ensure metadata when info opens or photo changes
   const ensureMeta = useCallback(async (id) => {
     if (!id) return null
+    // cache hit
     if (metaCacheRef.current.has(id)) {
       const m = metaCacheRef.current.get(id)
       setMeta(m)
@@ -326,6 +330,19 @@ export default function App() {
     if (infoOpen) { ensureMeta(cur.id) }
   }, [viewer.open, viewer.index, infoOpen, photos, ensureMeta])
 
+  // Keyboard nav
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!viewer.open) return
+      if (e.key === 'Escape') closeViewer()
+      if (e.key === 'ArrowRight') next()
+      if (e.key === 'ArrowLeft') prev()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [viewer.open, photos.length])
+
+  // Download
   const downloadActive = useCallback(async () => {
     const current = photos[viewer.index]
     if (!current) return
@@ -346,8 +363,55 @@ export default function App() {
     }
   }, [photos, viewer.index])
 
+  // Swipe (touch) for navigation
+  const touchStartRef = useRef({ x: 0, y: 0, t: 0 })
+  const onTouchStart = (e) => {
+    const t = e.touches[0]
+    touchStartRef.current = { x: t.clientX, y: t.clientY, t: Date.now() }
+  }
+  const onTouchMove = (e) => {
+    // if mostly horizontal, prevent scrolling to feel snappy
+    const t = e.touches[0]
+    const dx = t.clientX - touchStartRef.current.x
+    const dy = t.clientY - touchStartRef.current.y
+    if (Math.abs(dx) > Math.abs(dy)) e.preventDefault()
+  }
+  const onTouchEnd = () => {
+    const { x, y, t } = touchStartRef.current
+    const dt = Date.now() - t
+    // find last touch point from changedTouches? Not necessary; use the last stored deltas via touchStart+move
+    // We'll rely on a small threshold; since we prevented scroll on horizontal move, gesture is clean.
+    // To decide direction, we can read from a temp variable; instead compute from last known event via closure—keep it simple:
+    // we can't access last move deltas here, so read from element? Simpler: re-use start vs. end via PointerEvents would be better,
+    // but we'll approximate via touchend's changedTouches[0].
+    try {
+      const endTouch = (event) => event.changedTouches && event.changedTouches[0]
+      // This function exists only to clarify—but we don't have the event here.
+    } catch {}
+  }
+  // We'll implement using onTouchStart and onTouchEnd with event param:
+  const onTouchEndWithEvt = (e) => {
+    const start = touchStartRef.current
+    const end = e.changedTouches[0]
+    const dx = end.clientX - start.x
+    const dy = end.clientY - start.y
+    const adx = Math.abs(dx)
+    const ady = Math.abs(dy)
+    const dt = Date.now() - start.t
+    const THRESH = 50 // px
+    const MAX_ANGLE = 0.57 // ~33 degrees: ady/adx < tan(33°) ≈ 0.65 -> use stricter (0.57)
+    if (adx > THRESH && (ady / (adx || 1)) < MAX_ANGLE && dt < 800) {
+      if (dx < 0) next(); else prev()
+    }
+  }
+
+  const truncatedName = (viewer.open && photos[viewer.index]) ? ellipsizeWords(photos[viewer.index].fname || '', 8) : ''
   const currentPhoto = viewer.open ? photos[viewer.index] : null
-  const truncatedName = currentPhoto ? ellipsizeWords(currentPhoto.fname || '', 8) : ''
+
+  // Compute image max-height (avoid overlap with header and optional bottom sheet on mobile)
+  const imgMaxHeight = isSmall && infoOpen
+    ? `calc(100vh - ${HEADER_H}px - ${MOBILE_INFO_VH}vh - 24px)`
+    : `calc(100vh - ${HEADER_H}px - 24px)`
 
   return (
     <GlassShell>
@@ -369,7 +433,25 @@ export default function App() {
           {/* Resize handle */}
           <div
             className="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-white/10"
-            onPointerDown={onResizePointerDown}
+            onPointerDown={(e) => {
+              if (isSmall) return
+              e.preventDefault()
+              const startX = e.clientX
+              const start = sidebarWidth
+              document.body.style.cursor = 'col-resize'
+              const onMove = (ev) => {
+                const delta = ev.clientX - startX
+                const next = Math.max(200, Math.min(560, start + delta))
+                setSidebarWidth(next)
+              }
+              const onUp = () => {
+                document.removeEventListener('pointermove', onMove)
+                document.removeEventListener('pointerup', onUp)
+                document.body.style.cursor = ''
+              }
+              document.addEventListener('pointermove', onMove)
+              document.addEventListener('pointerup', onUp)
+            }}
             role="separator"
             aria-orientation="vertical"
             aria-label="Resize sidebar"
@@ -412,14 +494,14 @@ export default function App() {
                     <div className="flex items-center gap-2">
                       <button
                         className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
-                        onClick={() => adjustTile(20)}
+                        onClick={() => setTileMin(v => Math.min(640, v + 20))}
                         title="Larger"
                       >
                         <Plus className="w-4 h-4" />
                       </button>
                       <button
                         className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
-                        onClick={() => adjustTile(-20)}
+                        onClick={() => setTileMin(v => Math.max(60, v - 20))}
                         title="Smaller"
                       >
                         <Minus className="w-4 h-4" />
@@ -491,52 +573,69 @@ export default function App() {
 
       {/* Fullscreen Viewer */}
       {viewer.open && currentPhoto && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-stretch">
-          {/* Center image area */}
-          <div className="relative flex-1 flex items-center justify-center">
-            {/* Top filename bar (ellipsized) */}
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 px-3 py-1.5 max-w-[80vw] rounded-full bg-black/40 border border-white/10 text-sm text-white whitespace-nowrap overflow-hidden text-ellipsis">
-              {truncatedName}
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex">
+          {/* Desktop: image area + optional right sidebar. Mobile: bottom sheet replaces sidebar. */}
+          <div className="flex-1 flex flex-col">
+            {/* Viewer Header (no overlap with image) */}
+            <div
+              className="flex items-center gap-3 px-4"
+              style={{ height: HEADER_H }}
+            >
+              {/* Mobile left-aligned truncating title; desktop can naturally truncate too */}
+              <div className="flex-1 min-w-0">
+                <div className="text-sm text-white sm:text-center sm:mx-auto sm:max-w-[60vw] truncate">
+                  {truncatedName}
+                </div>
+              </div>
+
+              {/* Controls */}
+              <div className="flex items-center gap-2">
+                <button
+                  className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                  onClick={async () => { setInfoOpen(v => !v); if (!infoOpen) await ensureMeta(currentPhoto.id) }}
+                  title="Info"
+                >
+                  <Info className="w-6 h-6 text-white" />
+                </button>
+                <button
+                  className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                  onClick={downloadActive}
+                  title="Download"
+                >
+                  <Download className="w-6 h-6 text-white" />
+                </button>
+                <button
+                  className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                  onClick={closeViewer}
+                  title="Close"
+                >
+                  <X className="w-6 h-6 text-white" />
+                </button>
+              </div>
             </div>
 
-            {/* Controls on the right-top */}
-            <div className="absolute top-4 right-4 flex items-center gap-2">
-              <button
-                className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
-                onClick={async () => { setInfoOpen(v => !v); if (!infoOpen) await ensureMeta(currentPhoto.id) }}
-                title="Info"
-              >
-                <Info className="w-6 h-6 text-white" />
-              </button>
-              <button
-                className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
-                onClick={downloadActive}
-                title="Download"
-              >
-                <Download className="w-6 h-6 text-white" />
-              </button>
-              <button
-                className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
-                onClick={closeViewer}
-                title="Close"
-              >
-                <X className="w-6 h-6 text-white" />
-              </button>
-            </div>
+            {/* Image/body area */}
+            <div className="relative flex-1 flex items-center justify-center px-3 pb-3">
+              {/* Nav buttons */}
+              <button className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={prev}>◀</button>
 
-            {/* Nav buttons */}
-            <button className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={prev}>◀</button>
-            <img
-              src={`${BASE}/media/${currentPhoto.id}`}
-              alt={currentPhoto.fname}
-              className="max-h-[90vh] rounded-xl shadow-2xl border border-white/10"
-              style={{ maxWidth: infoOpen ? 'calc(92vw - 360px)' : '92vw' }}
-            />
-            <button className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={next}>▶</button>
+              {/* Image with swipe handlers */}
+              <img
+                src={`${BASE}/media/${currentPhoto.id}`}
+                alt={currentPhoto.fname}
+                className="rounded-xl shadow-2xl border border-white/10"
+                style={{ maxHeight: imgMaxHeight, maxWidth: isSmall && infoOpen ? '94vw' : '92vw' }}
+                onTouchStart={onTouchStart}
+                onTouchMove={onTouchMove}
+                onTouchEnd={onTouchEndWithEvt}
+              />
+
+              <button className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={next}>▶</button>
+            </div>
           </div>
 
-          {/* Right info panel */}
-          {infoOpen && (
+          {/* Desktop right info panel */}
+          {!isSmall && infoOpen && (
             <aside className="w-[340px] max-w-[80vw] border-l border-white/10 bg-slate-900/95 backdrop-blur px-4 py-4 overflow-auto">
               <div className="text-sm text-slate-200 font-semibold break-words">{meta?.fname || currentPhoto.fname}</div>
               <div className="mt-1 text-xs text-slate-400 break-all">{meta?.folder}</div>
@@ -550,7 +649,6 @@ export default function App() {
                 )}
               </div>
 
-              {/* EXIF */}
               <div className="mt-4">
                 <div className="text-xs font-semibold text-slate-300 mb-2">EXIF</div>
                 {meta?.exif ? (
@@ -572,6 +670,64 @@ export default function App() {
               </div>
             </aside>
           )}
+
+          {/* Mobile bottom sheet info panel */}
+          {isSmall && infoOpen && (
+            <aside
+              className="fixed bottom-0 left-0 right-0 z-[60] border-t border-white/10 bg-slate-900/95 backdrop-blur px-4 py-3 overflow-auto"
+              style={{ height: `${MOBILE_INFO_VH}vh` }}
+            >
+              <div className="text-sm text-slate-200 font-semibold break-words">{meta?.fname || currentPhoto.fname}</div>
+              <div className="mt-1 text-xs text-slate-400 break-all">{meta?.folder}</div>
+              <div className="mt-2 text-xs text-slate-300">
+                <div>Size: <span className="text-slate-100">{formatBytes(meta?.size ?? currentPhoto.size)}</span></div>
+                {meta?.width && meta?.height && (
+                  <div>Dimensions: <span className="text-slate-100">{meta.width} × {meta.height}</span></div>
+                )}
+                {meta?.format && (
+                  <div>Format: <span className="text-slate-100 uppercase">{meta.format}</span></div>
+                )}
+              </div>
+
+              <div className="mt-3">
+                <div className="text-xs font-semibold text-slate-300 mb-2">EXIF</div>
+                {meta?.exif ? (
+                  <div className="space-y-1 text-xs text-slate-300">
+                    {meta.exif.DateTimeOriginal && <div>Date Taken: <span className="text-slate-100">{meta.exif.DateTimeOriginal}</span></div>}
+                    {(meta.exif.Make || meta.exif.Model) && <div>Camera: <span className="text-slate-100">{[meta.exif.Make, meta.exif.Model].filter(Boolean).join(' ')}</span></div>}
+                    {meta.exif.LensModel && <div>Lens: <span className="text-slate-100">{meta.exif.LensModel}</span></div>}
+                    {meta.exif.FNumber && <div>Aperture: <span className="text-slate-100">f/{meta.exif.FNumber}</span></div>}
+                    {meta.exif.ExposureTime && <div>Shutter: <span className="text-slate-100">{meta.exif.ExposureTime}s</span></div>}
+                    {meta.exif.ISO && <div>ISO: <span className="text-slate-100">{meta.exif.ISO}</span></div>}
+                    {meta.exif.FocalLength && <div>Focal: <span className="text-slate-100">{meta.exif.FocalLength}mm</span></div>}
+                    {(meta.exif.GPSLatitude != null && meta.exif.GPSLongitude != null) && (
+                      <div>GPS: <span className="text-slate-100">{meta.exif.GPSLatitude}, {meta.exif.GPSLongitude}</span></div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-xs text-slate-400">No EXIF available.</div>
+                )}
+              </div>
+            </aside>
+          )}
+        </div>
+      )}
+
+      {/* Mobile sidebar drawer */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 z-50 sm:hidden">
+          <button className="absolute inset-0 bg-black/60" onClick={() => setSidebarOpen(false)} aria-label="Close sidebar overlay" />
+          <aside className="absolute inset-y-0 left-0 w-[82vw] max-w-[320px] bg-slate-900 border-r border-white/10 shadow-xl">
+            <div className="h-full overflow-auto p-2 pr-1">
+              <SidebarTree
+                tree={tree}
+                open={open}
+                toggle={toggle}
+                select={(p) => { setSelected(p); setSidebarOpen(false) }}
+                selected={selected}
+              />
+            </div>
+          </aside>
         </div>
       )}
     </GlassShell>
