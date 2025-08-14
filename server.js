@@ -130,17 +130,15 @@ function buildTree() {
       }
       parent = map.get(curPath)
     }
-    // assign only to leaf; aggregate later so parents reflect descendants fully
-    parent.count += count
+    // counts will be filled via prefix query later; ignore this row's count
   }
-  // aggregate counts upward so parents include all children recursively
-  const aggregate = (node) => {
-    let sum = node.count || 0
-    for (const c of node.children) sum += aggregate(c)
-    node.count = sum
-    return sum
+  // Fill counts using the same logic as header (prefix count per folder)
+  const prefixCount = db.prepare(`SELECT COUNT(*) as c FROM images WHERE folder LIKE ? || '%'`)
+  const fillCounts = (node) => {
+    node.count = prefixCount.get(node.path).c
+    node.children.forEach(fillCounts)
   }
-  aggregate(root)
+  fillCounts(root)
   // sort children alphabetically
   const sortRec = (n) => { n.children.sort((a,b)=>a.name.localeCompare(b.name)); n.children.forEach(sortRec) }
   sortRec(root)
@@ -198,7 +196,7 @@ app.get('/api/photos', (req, res) => {
         SELECT i.id, i.fname, i.folder FROM images i
         JOIN images_fts f ON f.rowid = i.id
         WHERE f MATCH ? AND i.folder LIKE ? || '%'
-        ORDER BY i.mtime DESC
+        ORDER BY i.mtime DESC, i.id DESC
         LIMIT ? OFFSET ?`)
       rows = stmt.all(term, folder, pageSize, offset)
       total = db.prepare(`
@@ -208,7 +206,7 @@ app.get('/api/photos', (req, res) => {
     } else {
       rows = db.prepare(`
         SELECT id, fname, folder FROM images WHERE folder LIKE ? || '%'
-        ORDER BY mtime DESC LIMIT ? OFFSET ?`).all(folder, pageSize, offset)
+        ORDER BY mtime DESC, id DESC LIMIT ? OFFSET ?`).all(folder, pageSize, offset)
       total = db.prepare(`SELECT COUNT(*) as c FROM images WHERE folder LIKE ? || '%'`).get(folder).c
     }
     res.json({ items: rows, total })
