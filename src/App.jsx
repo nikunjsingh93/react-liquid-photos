@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffect } from 'react'
 import AutoSizer from 'react-virtualized-auto-sizer'
 import { FixedSizeGrid as Grid } from 'react-window'
-import { FolderTree, RefreshCcw, Search, Image as ImageIcon, ChevronRight, ChevronDown, X, Maximize2, Download, Menu } from 'lucide-react'
+import { FolderTree, RefreshCcw, Search, Image as ImageIcon, ChevronRight, ChevronDown, X, Maximize2, Download, Menu, Plus, Minus } from 'lucide-react'
 
 const BASE = import.meta?.env?.DEV ? 'http://127.0.0.1:5174' : ''
 const API = {
@@ -54,7 +54,7 @@ function TreeNode({ node, depth, open, toggle, select, selected }) {
           onClick={() => select(node.path)}
         >
           <button
-            onClick={(e) => { e.stopPropagation(); if (hasChildren) toggle(node.path); select(node.path) }}
+            onClick={(e) => { e.stopPropagation(); if (hasChildren) toggle(node.path) }}
             className="p-0.5 rounded hover:bg-white/10"
           >
             {hasChildren ? (isOpen ? <ChevronDown className="w-4 h-4"/> : <ChevronRight className="w-4 h-4"/>) : <span className="w-4 h-4" />}
@@ -107,9 +107,59 @@ export default function App() {
   const sidebarRef = useRef(null)
   const isSmall = useMediaQuery('(max-width: 640px)')
   const photoIdsRef = useRef(new Set())
+  const [resizeOpen, setResizeOpen] = useState(false)
+  const [tileMin, setTileMin] = useState(120)
+  const resizeRef = useRef(null)
+  const [resizing, setResizing] = useState(false)
+  const [gridCols, setGridCols] = useState(1)
+  const [tileSize, setTileSize] = useState(120)
 
   // Ensure drawer is closed on mount
   useEffect(() => { setSidebarOpen(false) }, [])
+
+  // Close resize popover on outside click
+  useEffect(() => {
+    if (!resizeOpen) return
+    const onDoc = (e) => { if (!resizeRef.current) return; if (!resizeRef.current.contains(e.target)) setResizeOpen(false) }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [resizeOpen])
+
+  const adjustTile = useCallback((delta) => {
+    setResizing(true)
+    setTileMin(v => Math.max(60, Math.min(640, v + delta)))
+  }, [])
+
+  useEffect(() => {
+    if (!resizing) return
+    const t = setTimeout(() => setResizing(false), 250)
+    return () => clearTimeout(t)
+  }, [tileMin, resizing])
+
+  // Recompute grid columns and exact tile size to eliminate right-side gaps
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const calc = () => {
+      const style = getComputedStyle(el)
+      const pl = parseFloat(style.paddingLeft) || 0
+      const pr = parseFloat(style.paddingRight) || 0
+      const width = el.clientWidth - pl - pr
+      const gap = window.matchMedia('(min-width: 640px)').matches ? 6 : 4
+      if (width <= 0) return
+      const min = Math.max(60, tileMin)
+      let cols = Math.max(1, Math.floor((width + gap) / (min + gap)))
+      const inner = width - gap * (cols - 1)
+      const size = Math.floor(inner / cols)
+      setGridCols(cols)
+      setTileSize(size)
+    }
+    const ro = new ResizeObserver(calc)
+    ro.observe(el)
+    window.addEventListener('resize', calc)
+    calc()
+    return () => { ro.disconnect(); window.removeEventListener('resize', calc) }
+  }, [tileMin, isSmall, sidebarWidth])
 
   useEffect(() => { (async () => { const t = await API.tree(); setTree(t); setOpen(new Set([t.path])); setSelected(t.path) })() }, [])
 
@@ -301,7 +351,7 @@ export default function App() {
     <GlassShell>
       <div className="h-full min-h-0 grid" style={{ gridTemplateColumns: isSmall ? '1fr' : `${Math.round(sidebarWidth)}px 1fr` }}>
         <aside ref={sidebarRef} className="hidden sm:block relative border-r border-white/10 bg-slate-900">
-          <div className="flex items-center gap-2 p-3 border-b border-white/10">
+            <div className="flex items-center gap-2 p-3 border-b border-white/10">
             <ImageIcon className="w-5 h-5 text-slate-200" />
             <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
             <button
@@ -323,7 +373,7 @@ export default function App() {
           />
         </aside>
         <main className="flex flex-col min-h-0">
-          <header className="p-3 border-b border-white/10 bg-slate-900">
+          <header className="relative z-20 p-3 border-b border-white/10 bg-slate-900">
             <div className="flex items-center gap-3">
               <button
                 className="sm:hidden inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10"
@@ -341,22 +391,59 @@ export default function App() {
                   className="w-full pl-10 pr-3 py-2 rounded bg-white/10 border border-white/10 text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-white/20"
                 />
               </div>
+              <div ref={resizeRef} className="relative">
+                <button
+                  className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                  onClick={() => setResizeOpen(v => !v)}
+                  title="Resize grid"
+                  aria-haspopup="menu"
+                  aria-expanded={resizeOpen}
+                >
+                  <Maximize2 className="w-4 h-4" />
+                </button>
+                {resizeOpen && (
+                  <div className="absolute right-0 top-full mt-2 z-30 w-40 rounded border border-white/10 bg-slate-900 shadow-xl p-2">
+                    <div className="text-xs text-slate-300 mb-2">Resize grid</div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                        onClick={() => adjustTile(20)}
+                        title="Larger"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+                      <button
+                        className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                        onClick={() => adjustTile(-20)}
+                        title="Smaller"
+                      >
+                        <Minus className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
               <div className="text-xs text-slate-300 shrink-0 px-2 py-1 rounded bg-white/5 border border-white/10">{total.toLocaleString()} photos</div>
             </div>
           </header>
 
-          <section ref={scrollRef} className="flex-1 overflow-auto p-3">
+          <section ref={scrollRef} className="relative flex-1 overflow-auto p-3">
+            {resizing && (
+              <div className="absolute inset-0 z-10 bg-black/30 flex items-center justify-center">
+                <div className="h-10 w-10 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+              </div>
+            )}
             {error && (
               <div className="mb-3 text-sm text-rose-300 bg-rose-950/40 border border-rose-500/30 rounded-lg px-3 py-2">
                 {error}
               </div>
             )}
             {/* Responsive CSS grid with lazy images; virtualized grid could be swapped in if desired */}
-            <div className="grid gap-2 sm:gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))' }}>
+            <div className="grid gap-1 sm:gap-1.5" style={{ gridTemplateColumns: `repeat(${gridCols}, ${tileSize}px)` }}>
               {photos.map((p, i) => (
                 <button
                   key={p.id}
-                  className="group relative aspect-[4/3] overflow-hidden rounded-xl bg-white/5 border border-white/10 hover:scale-[1.01] transition"
+                  className="group relative aspect-[4/3] overflow-hidden bg-white/5 border border-white/10 hover:scale-[1.01] transition"
                   onClick={() => openViewer(i)}
                 >
                   <img
@@ -410,7 +497,7 @@ export default function App() {
             <X className="w-6 h-6 text-white" />
           </button>
           <button className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={prev}>◀</button>
-          <img src={`${BASE}/media/${photos[viewer.index].id}`} alt={photos[viewer.index].fname} className="max-h-[90vh] max-w-[92vw] rounded-xl shadow-2xl border border-white/10" />
+          <img src={`${BASE}/media/${photos[viewer.index].id}`} alt={photos[viewer.index].fname} className="max-h-[90vh] max-w-[92vw] shadow-2xl border border-white/10" />
           <button className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={next}>▶</button>
         </div>
       )}

@@ -130,9 +130,17 @@ function buildTree() {
       }
       parent = map.get(curPath)
     }
+    // assign only to leaf; aggregate later so parents reflect descendants fully
     parent.count += count
-    root.count += count
   }
+  // aggregate counts upward so parents include all children recursively
+  const aggregate = (node) => {
+    let sum = node.count || 0
+    for (const c of node.children) sum += aggregate(c)
+    node.count = sum
+    return sum
+  }
+  aggregate(root)
   // sort children alphabetically
   const sortRec = (n) => { n.children.sort((a,b)=>a.name.localeCompare(b.name)); n.children.forEach(sortRec) }
   sortRec(root)
