@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffect } from 'react'
 import AutoSizer from 'react-virtualized-auto-sizer'
 import { FixedSizeGrid as Grid } from 'react-window'
-import { FolderTree, RefreshCcw, Search, Image as ImageIcon, ChevronRight, ChevronDown, X, Maximize2, Download } from 'lucide-react'
+import { FolderTree, RefreshCcw, Search, Image as ImageIcon, ChevronRight, ChevronDown, X, Maximize2, Download, Menu } from 'lucide-react'
 
 const BASE = import.meta?.env?.DEV ? 'http://127.0.0.1:5174' : ''
 const API = {
@@ -14,11 +14,9 @@ const API = {
 }
 
 const GlassShell = ({ children }) => (
-  <div className="h-full w-full bg-gradient-to-br from-slate-900 via-slate-950 to-black text-slate-100">
-    <div className="h-full max-w-[1600px] mx-auto p-3 sm:p-4">
-      <div className="h-full rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl overflow-hidden">
-        {children}
-      </div>
+  <div className="h-full w-full bg-slate-900 text-slate-100">
+    <div className="h-full">
+      {children}
     </div>
   </div>
 )
@@ -76,6 +74,18 @@ function TreeNode({ node, depth, open, toggle, select, selected }) {
   )
 }
 
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(false)
+  useEffect(() => {
+    const m = window.matchMedia(query)
+    const on = () => setMatches(m.matches)
+    on()
+    try { m.addEventListener('change', on) } catch { m.addListener(on) }
+    return () => { try { m.removeEventListener('change', on) } catch { m.removeListener(on) } }
+  }, [query])
+  return matches
+}
+
 export default function App() {
   const [tree, setTree] = useState(null)
   const [open, setOpen] = useState(new Set())
@@ -92,6 +102,14 @@ export default function App() {
   const [initialLoaded, setInitialLoaded] = useState(false)
 
   const [viewer, setViewer] = useState({ open: false, index: 0 })
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(280)
+  const sidebarRef = useRef(null)
+  const isSmall = useMediaQuery('(max-width: 640px)')
+  const photoIdsRef = useRef(new Set())
+
+  // Ensure drawer is closed on mount
+  useEffect(() => { setSidebarOpen(false) }, [])
 
   useEffect(() => { (async () => { const t = await API.tree(); setTree(t); setOpen(new Set([t.path])); setSelected(t.path) })() }, [])
 
@@ -126,6 +144,7 @@ export default function App() {
       setError('')
       setInitialLoaded(false)
       setLoading(true)
+      photoIdsRef.current = new Set()
       try {
         const r = await API.photos(
           { folder: selected, q: debouncedQ, page: 1, pageSize: 200, _t: Date.now() },
@@ -134,10 +153,14 @@ export default function App() {
         if (!alive) return
         setTotal(Number(r.total || 0))
         const items = r.items || []
-        setPhotos(items)
-        const more = items.length < Number(r.total || items.length)
+        const unique = []
+        for (const it of items) {
+          if (!photoIdsRef.current.has(it.id)) { photoIdsRef.current.add(it.id); unique.push(it) }
+        }
+        setPhotos(unique)
+        const more = unique.length < Number(r.total || unique.length)
         setHasMore(more)
-        if (items.length > 0) setInitialLoaded(true)
+        if (unique.length > 0) setInitialLoaded(true)
         loadedFirstPageKeyRef.current = requestKey
       } catch (e) {
         if (!alive || e?.name === 'AbortError') return
@@ -177,7 +200,12 @@ export default function App() {
         if (!alive) return
         setTotal(Number(r.total || 0))
         setPhotos(prev => {
-          const next = [...prev, ...(r.items || [])]
+          const incoming = r.items || []
+          const filtered = []
+          for (const it of incoming) {
+            if (!photoIdsRef.current.has(it.id)) { photoIdsRef.current.add(it.id); filtered.push(it) }
+          }
+          const next = filtered.length ? [...prev, ...filtered] : prev
           setHasMore(next.length < Number(r.total || next.length))
           return next
         })
@@ -195,6 +223,9 @@ export default function App() {
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, debouncedQ, selected, hasMore, requestKey])
+
+  // Close drawer when switching to large screens to avoid stuck overlay
+  useEffect(() => { if (!isSmall && sidebarOpen) setSidebarOpen(false) }, [isSmall, sidebarOpen])
 
   const toggle = useCallback((p) => setOpen(s => { const n = new Set(s); n.has(p) ? n.delete(p) : n.add(p); return n }), [])
   const select = useCallback((p) => setSelected(p), [])
@@ -235,6 +266,26 @@ export default function App() {
     }
   }, [photos, viewer.index])
 
+  const onResizePointerDown = useCallback((e) => {
+    if (isSmall) return
+    e.preventDefault()
+    const startX = e.clientX
+    const startWidth = sidebarWidth
+    document.body.style.cursor = 'col-resize'
+    const onMove = (ev) => {
+      const delta = ev.clientX - startX
+      const next = Math.max(200, Math.min(560, startWidth + delta))
+      setSidebarWidth(next)
+    }
+    const onUp = () => {
+      document.removeEventListener('pointermove', onMove)
+      document.removeEventListener('pointerup', onUp)
+      document.body.style.cursor = ''
+    }
+    document.addEventListener('pointermove', onMove)
+    document.addEventListener('pointerup', onUp)
+  }, [sidebarWidth, isSmall])
+
   useEffect(() => {
     const onKey = (e) => {
       if (!viewer.open) return
@@ -248,8 +299,8 @@ export default function App() {
 
   return (
     <GlassShell>
-      <div className="h-full min-h-0 grid grid-cols-[280px_1fr]">
-        <aside className="border-r border-white/10 bg-white/5">
+      <div className="h-full min-h-0 grid" style={{ gridTemplateColumns: isSmall ? '1fr' : `${Math.round(sidebarWidth)}px 1fr` }}>
+        <aside ref={sidebarRef} className="hidden sm:block relative border-r border-white/10 bg-slate-900">
           <div className="flex items-center gap-2 p-3 border-b border-white/10">
             <ImageIcon className="w-5 h-5 text-slate-200" />
             <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
@@ -262,20 +313,35 @@ export default function App() {
             </button>
           </div>
           <SidebarTree tree={tree} open={open} toggle={toggle} select={select} selected={selected} />
+          {/* Resize handle */}
+          <div
+            className="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-white/10"
+            onPointerDown={onResizePointerDown}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize sidebar"
+          />
         </aside>
         <main className="flex flex-col min-h-0">
-          <header className="p-3 border-b border-white/10 bg-white/5 backdrop-blur-xl">
+          <header className="p-3 border-b border-white/10 bg-slate-900">
             <div className="flex items-center gap-3">
+              <button
+                className="sm:hidden inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10"
+                onClick={() => setSidebarOpen(true)}
+                aria-label="Open sidebar"
+              >
+                <Menu className="w-5 h-5 text-slate-200" />
+              </button>
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <input
                   value={query}
                   onChange={e => setQuery(e.target.value)}
                   placeholder="Search file names, e.g. ‘beach sunset 2022’"
-                  className="w-full pl-10 pr-3 py-2 rounded-2xl bg-white/10 border border-white/10 text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-white/20"
+                  className="w-full pl-10 pr-3 py-2 rounded bg-white/10 border border-white/10 text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-white/20"
                 />
               </div>
-              <div className="text-xs text-slate-300 shrink-0 px-2 py-1 rounded-lg bg-white/5 border border-white/10">{total.toLocaleString()} photos</div>
+              <div className="text-xs text-slate-300 shrink-0 px-2 py-1 rounded bg-white/5 border border-white/10">{total.toLocaleString()} photos</div>
             </div>
           </header>
 
@@ -308,6 +374,27 @@ export default function App() {
           </section>
         </main>
       </div>
+
+      {/* Mobile sidebar drawer */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 z-50 sm:hidden">
+          <button className="absolute inset-0 bg-black/60" onClick={() => setSidebarOpen(false)} aria-label="Close sidebar overlay" />
+          <aside className="absolute inset-y-0 left-0 w-[82vw] max-w-[320px] bg-slate-900 border-r border-white/10 shadow-xl">
+            <div className="h-full overflow-auto p-2 pr-1">
+              <SidebarTree
+                tree={tree}
+                open={open}
+                toggle={toggle}
+                select={(p) => { setSelected(p); setSidebarOpen(false) }}
+                selected={selected}
+              />
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {/* Mobile floating hamburger button */}
+      {/* Floating hamburger removed; header now holds it on mobile */}
 
       {/* Fullscreen Viewer */}
       {viewer.open && photos[viewer.index] && (
