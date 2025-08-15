@@ -11,9 +11,11 @@ import Database from 'better-sqlite3'
 import sharp from 'sharp'
 import mime from 'mime-types'
 import archiver from 'archiver'
+import { fileURLToPath } from 'url'
 
 /* ---------- config ---------- */
 const ROOT = process.cwd()
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PHOTOS_ROOT = process.env.PHOTOS_PATH || '/pictures'
 const PORT = Number(process.env.PORT || 5174)
 const HOST = process.env.HOST || '127.0.0.1'
@@ -191,7 +193,7 @@ async function ensureThumb(absPath) {
 }
 
 /* ---------- tree (scoped) ---------- */
-function buildTreeForScope(scopePath /* posix, '' for whole */) {
+function buildTreeForScope(scopePath) {
   const lower = scopePath
   const upper = scopePath + '\uFFFF'
   const rows = db.prepare(`SELECT DISTINCT folder FROM images WHERE folder >= ? AND folder < ?`).all(lower, upper)
@@ -325,7 +327,8 @@ function authOptional(req, _res, next) {
   req.user = null
   const cookies = parseCookies(req)
   const token = cookies[SESSION_COOKIE]
-  const row = token ? getSession.get(token) : null
+  if (!token) return next()
+  const row = getSession.get(token)
   if (!row) return next()
   if (row.expires_at < nowMs()) { try { deleteSession.run(token) } catch {} ; return next() }
   req.user = { id: row.user_id, username: row.username, is_admin: !!row.is_admin, root_path: row.root_path ? toPosix(row.root_path) : '' }
@@ -372,6 +375,7 @@ app.post('/api/auth/login', (req, res) => {
   const created = nowMs(), expires = created + SESSION_TTL_MS
   insertSession.run(u.id, token, created, expires)
   const isProd = process.env.NODE_ENV === 'production'
+  // Same-origin cookies work with Lax; keep Secure only in production/https.
   res.cookie?.(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: 'lax',
@@ -434,7 +438,7 @@ app.get('/api/photos', requireAuth, (req, res) => {
 
   try {
     let rows = []
-    let total = 0
+       , total = 0
 
     if (q) {
       const term = q.replace(/\s+/g, ' ')
@@ -565,21 +569,36 @@ app.post('/download/batch', requireAuth, async (req, res) => {
   }
 })
 
-/* ---------- SPA static hosting (serve built frontend) ---------- */
-const DIST_DIR = path.join(ROOT, 'dist')
-try {
-  if (fs.existsSync(DIST_DIR)) {
-    app.use(express.static(DIST_DIR, { maxAge: '1h', setHeaders: (res) => res.setHeader('Cache-Control', 'public, max-age=3600') }))
-    // SPA fallback for any non-API, non-media route:
-    app.get(/^\/(?!api|thumb|media|download)(.*)/, (_req, res) => {
-      res.sendFile(path.join(DIST_DIR, 'index.html'))
-    })
-    console.log('Static frontend:', DIST_DIR)
-  } else {
-    console.warn('Static frontend not found at', DIST_DIR, '(requests to / will 404)')
+/* delete user */
+app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
+  if (req.user?.id === id) return res.status(400).json({ error: 'cannot delete your own account' })
+  try {
+    const stmt = db.prepare('DELETE FROM users WHERE id = ?')
+    const info = stmt.run(id)
+    if (info.changes === 0) return res.status(404).json({ error: 'not found' })
+    try { db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id) } catch {}
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
   }
-} catch (e) {
-  console.warn('Static setup error:', e?.message || e)
+})
+
+/* ---------- static web (serve built UI) ---------- */
+const DIST_DIR = path.join(ROOT, 'dist')  // in the container we copy the built app here
+if (fs.existsSync(DIST_DIR)) {
+  app.use(express.static(DIST_DIR, { fallthrough: true }))
+  // SPA fallback for non-API routes
+  app.get('*', (req, res, next) => {
+    if (
+      req.path.startsWith('/api/') ||
+      req.path.startsWith('/thumb/') ||
+      req.path.startsWith('/media/') ||
+      req.path.startsWith('/download/')
+    ) return next()
+    res.sendFile(path.join(DIST_DIR, 'index.html'))
+  })
 }
 
 /* Debug 404 (keep last) */
