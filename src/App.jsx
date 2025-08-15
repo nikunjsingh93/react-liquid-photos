@@ -164,7 +164,7 @@ export default function App() {
   const [view, setView] = useState('photos')
 
   // Sidebar + layout
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(true) // open by default
   const [sidebarWidth, setSidebarWidth] = useState(280)
   const isSmall = useMediaQuery('(max-width: 640px)')
 
@@ -218,6 +218,7 @@ export default function App() {
           setTree(t)
           setOpen(new Set([t.path]))
           setSelected(t.path)
+          setSidebarOpen(true) // ensure open after login
         } else {
           setUser(null)
         }
@@ -230,16 +231,13 @@ export default function App() {
   }, [])
 
   // Expand/collapse folders in the sidebar tree
-const toggle = useCallback((p) => {
-  setOpen(prev => {
-    const n = new Set(prev)
-    n.has(p) ? n.delete(p) : n.add(p)
-    return n
-  })
-}, [])
-
-  // Close drawer on large screens
-  useEffect(() => { if (!isSmall && sidebarOpen) setSidebarOpen(false) }, [isSmall, sidebarOpen])
+  const toggle = useCallback((p) => {
+    setOpen(prev => {
+      const n = new Set(prev)
+      n.has(p) ? n.delete(p) : n.add(p)
+      return n
+    })
+  }, [])
 
   // Close resize popover on outside click
   useEffect(() => {
@@ -481,6 +479,7 @@ const toggle = useCallback((p) => {
             setTree(t)
             setOpen(new Set([t.path]))
             setSelected(t.path)
+            setSidebarOpen(true) // open by default after login
           }
         }}
       />
@@ -498,118 +497,126 @@ const toggle = useCallback((p) => {
       {view === 'admin' ? (
         <AdminPanel user={user} onClose={() => setView('photos')} />
       ) : (
-        <div className="h-full min-h-0 grid" style={{ gridTemplateColumns: isSmall ? '1fr' : `${Math.round(sidebarWidth)}px 1fr` }}>
-          {/* Sidebar (desktop) */}
-          <aside className="hidden sm:block relative border-r border-white/10 bg-zinc-950">
-            <div className="flex items-center gap-2 p-3 border-b border-white/10">
-              <ImageIcon className="w-5 h-5 text-slate-200" />
-              <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
-              <button
-                className="ml-auto inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10"
-                onClick={() => API.rescan().then(() => API.tree().then(t => { setTree(t); setOpen(new Set([t.path])); setSelected(t.path) }))}
-                title="Rescan Library"
-              >
-                <RefreshCcw className="w-4 h-4" /> Rescan
-              </button>
-            </div>
-            <SidebarTree
-              tree={tree}
-              open={open}
-              toggle={toggle}
-              select={setSelected}
-              selected={selected}
-              user={user}
-              onGoAdmin={() => setView('admin')}
-              onSignOut={async () => { await API.logout(); setUser(null) }}
-            />
-            {/* Resize handle */}
-            <div
-              className="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-white/10"
-              onPointerDown={(e) => {
-                if (isSmall) return
-                e.preventDefault()
-                const startX = e.clientX
-                const start = sidebarWidth
-                document.body.style.cursor = 'col-resize'
-                const onMove = (ev) => {
-                  const delta = ev.clientX - startX
-                  const next = Math.max(200, Math.min(560, start + delta))
-                  setSidebarWidth(next)
-                }
-                const onUp = () => {
-                  document.removeEventListener('pointermove', onMove)
-                  document.removeEventListener('pointerup', onUp)
-                  document.body.style.cursor = ''
-                }
-                document.addEventListener('pointermove', onMove)
-                document.addEventListener('pointerup', onUp)
-              }}
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize sidebar"
-            />
-          </aside>
+        <div
+          className="h-full min-h-0 grid"
+          style={{ gridTemplateColumns: (!isSmall && sidebarOpen) ? `${Math.round(sidebarWidth)}px 1fr` : '1fr' }}
+        >
+          {/* Desktop Sidebar (only when open) */}
+          {!isSmall && sidebarOpen && (
+            <aside className="relative border-r border-white/10 bg-zinc-950">
+              <div className="flex items-center gap-2 p-3 border-b border-white/10">
+                <ImageIcon className="w-5 h-5 text-slate-200" />
+                <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
+                <button
+                  className="ml-auto inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10"
+                  onClick={() =>
+                    API.rescan().then(() =>
+                      API.tree().then(t => { setTree(t); setOpen(new Set([t.path])); setSelected(t.path) })
+                    )
+                  }
+                  title="Rescan Library"
+                >
+                  <RefreshCcw className="w-4 h-4" /> Rescan
+                </button>
+              </div>
+              <SidebarTree
+                tree={tree}
+                open={open}
+                toggle={toggle}
+                select={setSelected}
+                selected={selected}
+                user={user}
+                onGoAdmin={() => setView('admin')}
+                onSignOut={async () => { await API.logout(); setUser(null) }}
+              />
+              {/* Resize handle */}
+              <div
+                className="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-white/10"
+                onPointerDown={(e) => {
+                  if (isSmall) return
+                  e.preventDefault()
+                  const startX = e.clientX
+                  const start = sidebarWidth
+                  document.body.style.cursor = 'col-resize'
+                  const onMove = (ev) => {
+                    const delta = ev.clientX - startX
+                    const next = Math.max(200, Math.min(560, start + delta))
+                    setSidebarWidth(next)
+                  }
+                  const onUp = () => {
+                    document.removeEventListener('pointermove', onMove)
+                    document.removeEventListener('pointerup', onUp)
+                    document.body.style.cursor = ''
+                  }
+                  document.addEventListener('pointermove', onMove)
+                  document.addEventListener('pointerup', onUp)
+                }}
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize sidebar"
+              />
+            </aside>
+          )}
 
           {/* Main */}
           <main className="flex flex-col min-h-0">
-            {/* Multi-select toolbar overlay */}
-            {selectMode && (
-              <div className="z-30 sticky top-0 bg-zinc-950/95 border-b border-white/10 shadow flex items-center justify-between px-3 py-2">
-                <div className="text-sm">{selectedIds.size} selected</div>
-                <div className="flex items-center gap-2">
+            {/* Header */}
+            <header className="relative z-20 p-3 border-b border-white/10 bg-zinc-950">
+              <div className="flex items-center gap-3">
+                {/* Toggle always visible; opens and closes the sidebar */}
+                <button
+                  className="inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10"
+                  onClick={() => setSidebarOpen(v => !v)}
+                  aria-label="Toggle sidebar"
+                >
+                  <Menu className="w-5 h-5 text-slate-200" />
+                </button>
+
+                {/* Brand in header ONLY when desktop & sidebar is closed */}
+                {!isSmall && !sidebarOpen && (
+                  <div className="flex items-center gap-2">
+                    <ImageIcon className="w-5 h-5 text-slate-200" />
+                    <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
+                  </div>
+                )}
+
+                {/* Multiselect toggle */}
+                <button
+                  className={`inline-flex items-center gap-2 px-2 py-1 rounded border ${selectMode ? 'bg-white/20 border-white/20' : 'bg-white/10 border-white/10 hover:bg-white/15'}`}
+                  onClick={() => setSelectMode(v => { const nv = !v; if (!nv) setSelectedIds(new Set()); return nv })}
+                  title="Multi-select"
+                >
+                  <CheckSquare className="w-4 h-4" />
+                  <span className="text-xs hidden sm:block">Select</span>
+                </button>
+
+                {/* Admin button */}
+                {user?.is_admin && (
                   <button
                     className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
-                    onClick={downloadZip}
-                    title="Download .zip"
+                    onClick={() => setView('admin')}
+                    title="Admin panel"
                   >
-                    <Download className="w-4 h-4" /> .zip
+                    <Shield className="w-4 h-4" /> Admin
                   </button>
-                  <button
-                    className="inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10 hover:bg-white/20"
-                    onClick={() => { setSelectMode(false); setSelectedIds(new Set()) }}
-                    title="Exit select"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-            )}
+                )}
 
-            {/* Regular header */}
-            {!selectMode && (
-              <header className="relative z-20 p-3 border-b border-white/10 bg-zinc-950">
-                <div className="flex items-center gap-3">
-                  <button
-                    className="sm:hidden inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10"
-                    onClick={() => setSidebarOpen(true)}
-                    aria-label="Open sidebar"
-                  >
-                    <Menu className="w-5 h-5 text-slate-200" />
-                  </button>
-
-                  {/* Multiselect toggle */}
-                  <button
-                    className={`inline-flex items-center gap-2 px-2 py-1 rounded border ${selectMode ? 'bg-white/20 border-white/20' : 'bg-white/10 border-white/10 hover:bg-white/15'}`}
-                    onClick={() => setSelectMode(v => { const nv = !v; if (!nv) setSelectedIds(new Set()); return nv })}
-                    title="Multi-select"
-                  >
-                    <CheckSquare className="w-4 h-4" />
-                    <span className="text-xs hidden sm:block">Select</span>
-                  </button>
-
-                  {/* Admin button */}
-                  {user?.is_admin && (
+                {/* Right side controls */}
+                <div className="ml-auto flex items-center gap-2">
+                  {/* Sign out (desktop header) */}
+                  {!isSmall && (
                     <button
                       className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
-                      onClick={() => setView('admin')}
-                      title="Admin panel"
+                      title="Sign out"
+                      onClick={async () => { await API.logout(); setUser(null) }}
                     >
-                      <Shield className="w-4 h-4" /> Admin
+                      <LogOut className="w-4 h-4" />
+                      <span className="text-xs hidden sm:block">Sign out</span>
                     </button>
                   )}
 
                   {/* Resize */}
-                  <div ref={resizeRef} className="relative ml-auto">
+                  <div ref={resizeRef} className="relative">
                     <button
                       className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
                       onClick={() => setResizeOpen(v => !v)}
@@ -642,21 +649,34 @@ const toggle = useCallback((p) => {
                     )}
                   </div>
 
-                  {/* Sign out always visible */}
-                  <button
-                    className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
-                    title="Sign out"
-                    onClick={async () => { await API.logout(); setUser(null) }}
-                  >
-                    <LogOut className="w-4 h-4" />
-                    <span className="text-xs hidden sm:block">Sign out</span>
-                  </button>
-
                   <div className="text-xs text-slate-300 shrink-0 px-2 py-1 rounded bg-white/5 border border-white/10">
                     {total.toLocaleString()} photos
                   </div>
                 </div>
-              </header>
+              </div>
+            </header>
+
+            {/* Multi-select toolbar overlay */}
+            {selectMode && (
+              <div className="z-30 sticky top-0 bg-zinc-950/95 border-b border-white/10 shadow flex items-center justify-between px-3 py-2">
+                <div className="text-sm">{selectedIds.size} selected</div>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                    onClick={downloadZip}
+                    title="Download .zip"
+                  >
+                    <Download className="w-4 h-4" /> .zip
+                  </button>
+                  <button
+                    className="inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10 hover:bg-white/20"
+                    onClick={() => { setSelectMode(false); setSelectedIds(new Set()) }}
+                    title="Exit select"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
             )}
 
             <section ref={scrollRef} className="relative flex-1 overflow-auto p-3">
@@ -711,7 +731,46 @@ const toggle = useCallback((p) => {
         </div>
       )}
 
-      {/* Fullscreen Viewer (restored) */}
+      {/* Mobile sidebar drawer (toggle opens/closes) */}
+      {isSmall && sidebarOpen && (
+        <div className="fixed inset-0 z-50">
+          <button
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Close sidebar overlay"
+          />
+          <aside className="absolute inset-y-0 left-0 w-[82vw] max-w-[320px] bg-zinc-950 border-r border-white/10 shadow-xl flex flex-col">
+            <div className="flex items-center gap-2 p-3 border-b border-white/10">
+              {/* NEW: hamburger in the sidebar header to close it */}
+              <button
+                className="inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10"
+                onClick={() => setSidebarOpen(false)}
+                aria-label="Close sidebar"
+                title="Close"
+              >
+                <Menu className="w-5 h-5 text-slate-200" />
+              </button>
+              <ImageIcon className="w-5 h-5 text-slate-200" />
+              <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
+              <div className="ml-auto" />
+            </div>
+            <div className="min-h-0 flex-1">
+              <SidebarTree
+                tree={tree}
+                open={open}
+                toggle={toggle}
+                select={(p) => { setSelected(p); setSidebarOpen(false) }}
+                selected={selected}
+                user={user}
+                onGoAdmin={() => { setView('admin'); setSidebarOpen(false) }}
+                onSignOut={async () => { await API.logout(); setUser(null) }}
+              />
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {/* Fullscreen Viewer */}
       {viewer.open && currentPhoto && (
         <Viewer
           isSmall={isSmall}
