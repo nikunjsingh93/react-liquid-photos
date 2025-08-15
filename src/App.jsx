@@ -60,15 +60,18 @@ const GlassShell = ({ children }) => (
 function SidebarTree({ tree, open, toggle, select, selected, onSignOut, user, onGoAdmin }) {
   if (!tree) return null
   return (
-    <div className="h-full flex flex-col">
-      <div className="flex-1 overflow-auto p-2 pr-1">
+    <div className="h-full min-h-0 flex flex-col">
+      {/* scrollable tree area */}
+      <div className="flex-1 overflow-auto p-2 pr-1" style={{ WebkitOverflowScrolling: 'touch' }}>
         <div className="flex items-center gap-2 text-slate-300 mb-2 px-2">
           <FolderTree className="w-5 h-5" />
           <span className="text-sm font-medium">Folders</span>
         </div>
         <TreeNode node={tree} depth={0} open={open} toggle={toggle} select={select} selected={selected} />
       </div>
-      <div className="border-t border-white/10 p-2 flex items-center gap-2">
+
+      {/* pinned footer (never hidden) */}
+      <div className="shrink-0 border-t border-white/10 p-2 flex items-center gap-2 bg-zinc-950">
         {user?.is_admin && (
           <button
             className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
@@ -161,6 +164,9 @@ const MOBILE_INFO_VH = 40
 
 /* ----- App ----- */
 export default function App() {
+  // media first (used to set initial sidebar state)
+  const isSmall = useMediaQuery('(max-width: 640px)')
+
   // auth
   const [user, setUser] = useState(null)
   const [authChecked, setAuthChecked] = useState(false)
@@ -169,9 +175,11 @@ export default function App() {
   const [view, setView] = useState('photos')
 
   // Sidebar + layout
-  const [sidebarOpen, setSidebarOpen] = useState(true) // open by default
+  // Default: OPEN on desktop, COLLAPSED on mobile (and stay collapsed on refresh)
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    try { return !window.matchMedia('(max-width: 640px)').matches } catch { return true }
+  })
   const [sidebarWidth, setSidebarWidth] = useState(280)
-  const isSmall = useMediaQuery('(max-width: 640px)')
 
   // Folder/tree
   const [tree, setTree] = useState(null)
@@ -223,7 +231,7 @@ export default function App() {
           setTree(t)
           setOpen(new Set([t.path]))
           setSelected(t.path)
-          setSidebarOpen(true) // ensure open after login
+          // DO NOT force-open sidebar here; initial state already respects mobile/desktop
         } else {
           setUser(null)
         }
@@ -484,7 +492,7 @@ export default function App() {
             setTree(t)
             setOpen(new Set([t.path]))
             setSelected(t.path)
-            setSidebarOpen(true) // open by default after login
+            // Keep sidebar collapsed on mobile by default; do not force-open here
           }
         }}
       />
@@ -525,7 +533,7 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Make inner content fill and keep footer pinned */}
+              {/* Let the child control scrolling; no overflow-hidden here */}
               <div className="min-h-0 flex-1">
                 <SidebarTree
                   tree={tree}
