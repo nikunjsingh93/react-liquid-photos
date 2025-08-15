@@ -14,28 +14,30 @@ import archiver from 'archiver'
 
 /* ---------- config ---------- */
 const ROOT = process.cwd()
-
-// Default to /pictures so you don't need PHOTOS_PATH env
-const DEFAULT_PHOTOS_MOUNT = '/pictures'
-const PHOTOS_ROOT = (process.env.PHOTOS_PATH || DEFAULT_PHOTOS_MOUNT).trim()
-if (!PHOTOS_ROOT || !fs.existsSync(PHOTOS_ROOT)) {
-  console.error('Photos path is missing or not mounted:', PHOTOS_ROOT)
-  console.error('Hint: add a volume like -v /host/photos:/pictures:ro')
+const PHOTOS_ROOT = process.env.PHOTOS_PATH
+if (!PHOTOS_ROOT) {
+  console.error('Please set PHOTOS_PATH in .env')
   process.exit(1)
 }
-
 const PORT = Number(process.env.PORT || 5174)
-// IMPORTANT for Docker: set HOST=0.0.0.0 when running the container
 const HOST = process.env.HOST || '127.0.0.1'
-
 const CACHE_DIR = path.join(ROOT, '.cache')
 const DB_PATH = path.join(CACHE_DIR, 'index.db')
 const THUMBS_DIR = path.join(CACHE_DIR, 'thumbs')
 const THUMB_WIDTH = Number(process.env.THUMB_WIDTH || 512)
 const DB_CACHE_SIZE_MB = Number(process.env.DB_CACHE_SIZE_MB || 256)
 
-// Serve built SPA from dist/
-const STATIC_DIR = process.env.STATIC_DIR || path.join(ROOT, 'dist')
+/* ---- watcher config via env (Option 3) ----
+   Default: disabled to avoid ENOSPC on big libraries.
+   Set WATCH_ENABLED=1 to turn on live watching.
+*/
+const WATCH_ENABLED = (process.env.WATCH_ENABLED ?? '0') !== '0' // "1" => enabled
+const WATCH_DEPTH   = Number(process.env.WATCH_DEPTH || 99)      // limit depth if desired
+const WATCH_POLL    = (process.env.WATCH_POLL || '0') === '1'    // fallback to polling
+const WATCH_IGNORED = (process.env.WATCH_IGNORED || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean)
 
 fs.mkdirSync(CACHE_DIR, { recursive: true })
 fs.mkdirSync(THUMBS_DIR, { recursive: true })
@@ -140,9 +142,11 @@ function ensureColumn(table, specSql, colName, indexSql = null) {
     if (indexSql) db.exec(indexSql)
   }
 }
+// ensure sessions has token/created_at/expires_at (old DBs may be missing token)
 ensureColumn('sessions', 'token TEXT', 'token', 'CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token)')
 ensureColumn('sessions', 'created_at INTEGER NOT NULL DEFAULT 0', 'created_at')
 ensureColumn('sessions', 'expires_at INTEGER NOT NULL DEFAULT 0', 'expires_at')
+// ensure users has is_admin/root_path if very old
 ensureColumn('users', 'is_admin INTEGER NOT NULL DEFAULT 0', 'is_admin')
 ensureColumn('users', 'root_path TEXT', 'root_path')
 
@@ -172,7 +176,7 @@ async function scanAndIndex() {
     try {
       const st = await fsp.stat(abs)
       const r = rel(abs)
-      const folder = toPosix(path.dirname(r))
+      const folder = toPosix(path.dirname(r)) // root files ⇒ '.'
       const fname = path.basename(abs)
       ops.push(() => insertStmt.run(r, fname, folder, Math.floor(st.ctimeMs), Math.floor(st.mtimeMs), st.size))
       count++
@@ -196,11 +200,12 @@ async function ensureThumb(absPath) {
 }
 
 /* ---------- tree (scoped) ---------- */
-function buildTreeForScope(scopePath) {
+function buildTreeForScope(scopePath /* posix, '' for whole */) {
   const lower = scopePath
   const upper = scopePath + '\uFFFF'
   const rows = db.prepare(`SELECT DISTINCT folder FROM images WHERE folder >= ? AND folder < ?`).all(lower, upper)
 
+  // root node name
   let rootName = path.basename(PHOTOS_ROOT) || '/'
   if (scopePath) {
     const parts = scopePath.split('/').filter(Boolean)
@@ -208,7 +213,9 @@ function buildTreeForScope(scopePath) {
   }
   const root = { name: rootName, path: '', count: 0, children: [] }
 
+  // Map of relative (to scope) node path → node
   const map = new Map([['', root]])
+
   for (const { folder } of rows) {
     const relPath = scopePath ? folder.replace(new RegExp(`^${scopePath}/?`), '') : folder
     if (relPath === '' || relPath === '.') continue
@@ -245,21 +252,38 @@ function buildTreeForScope(scopePath) {
 const empty = db.prepare('SELECT COUNT(*) as c FROM images').get().c === 0
 if (empty) { await scanAndIndex() }
 
-/* ---------- watch filesystem ---------- */
-chokidar.watch(PHOTOS_ROOT, { ignoreInitial: true, depth: 99 })
-  .on('add', async (abs) => {
-    const ext = path.extname(abs).toLowerCase(); if (!IMG_EXT.has(ext)) return
-    const st = await fsp.stat(abs).catch(() => null); if (!st) return
-    const r = rel(abs); const folder = toPosix(path.dirname(r)); const fname = path.basename(abs)
-    insertStmt.run(r, fname, folder, Math.floor(st.ctimeMs), Math.floor(st.mtimeMs), st.size)
+/* ---------- watch filesystem (optional) ---------- */
+if (WATCH_ENABLED) {
+  const watcher = chokidar.watch(PHOTOS_ROOT, {
+    ignoreInitial: true,
+    depth: WATCH_DEPTH,
+    usePolling: WATCH_POLL,
+    awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
+    ignored: WATCH_IGNORED.length ? WATCH_IGNORED : undefined,
   })
-  .on('change', async (abs) => {
-    const st = await fsp.stat(abs).catch(() => null); if (!st) return
-    updateStmt.run(Math.floor(st.ctimeMs), Math.floor(st.mtimeMs), st.size, rel(abs))
-  })
-  .on('unlink', (abs) => {
-    db.prepare('DELETE FROM images WHERE path=?').run(rel(abs))
-  })
+
+  watcher
+    .on('add', async (abs) => {
+      const ext = path.extname(abs).toLowerCase(); if (!IMG_EXT.has(ext)) return
+      const st = await fsp.stat(abs).catch(() => null); if (!st) return
+      const r = rel(abs); const folder = toPosix(path.dirname(r)); const fname = path.basename(abs)
+      insertStmt.run(r, fname, folder, Math.floor(st.ctimeMs), Math.floor(st.mtimeMs), st.size)
+    })
+    .on('change', async (abs) => {
+      const st = await fsp.stat(abs).catch(() => null); if (!st) return
+      updateStmt.run(Math.floor(st.ctimeMs), Math.floor(st.mtimeMs), st.size, rel(abs))
+    })
+    .on('unlink', (abs) => {
+      db.prepare('DELETE FROM images WHERE path=?').run(rel(abs))
+    })
+    .on('error', (err) => {
+      console.error('[watcher] error:', err?.message || err)
+    })
+
+  console.log(`[watcher] enabled (depth=${WATCH_DEPTH}, polling=${WATCH_POLL}, ignored=${WATCH_IGNORED.join(' | ') || 'none'})`)
+} else {
+  console.log('[watcher] disabled (use /api/index or the “Rescan” button to refresh)')
+}
 
 /* ---------- auth helpers ---------- */
 function parseCookies(req) {
@@ -288,6 +312,7 @@ const anyAdmin = db.prepare(`SELECT id FROM users WHERE is_admin = 1 LIMIT 1`)
 /* admin bootstrap */
 function normalizeScopeInput(input) {
   if (!input) return ''
+  // Convert to posix relative to PHOTOS_ROOT; reject if outside
   let p = input
   if (path.isAbsolute(p)) {
     const relp = path.relative(PHOTOS_ROOT, p)
@@ -313,7 +338,8 @@ function authOptional(req, _res, next) {
   req.user = null
   const cookies = parseCookies(req)
   const token = cookies[SESSION_COOKIE]
-  const row = token ? getSession.get(token) : null
+  if (!token) return next()
+  const row = getSession.get(token)
   if (!row) return next()
   if (row.expires_at < nowMs()) { try { deleteSession.run(token) } catch {} ; return next() }
   req.user = { id: row.user_id, username: row.username, is_admin: !!row.is_admin, root_path: row.root_path ? toPosix(row.root_path) : '' }
@@ -350,11 +376,6 @@ const app = express()
 app.use(cors({ origin: true, credentials: true }))
 app.use(express.json({ limit: '5mb' }))
 
-/* Serve SPA static assets */
-if (fs.existsSync(STATIC_DIR)) {
-  app.use(express.static(STATIC_DIR, { maxAge: '1d', index: 'index.html' }))
-}
-
 /* auth routes */
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body || {}
@@ -365,10 +386,13 @@ app.post('/api/auth/login', (req, res) => {
   const created = nowMs(), expires = created + SESSION_TTL_MS
   insertSession.run(u.id, token, created, expires)
   const isProd = process.env.NODE_ENV === 'production'
-  res.cookie?.('lp_session', token, {
-    httpOnly: true, sameSite: 'lax', secure: isProd, maxAge: SESSION_TTL_MS, path: '/',
-  }) || res.setHeader('Set-Cookie',
-    `lp_session=${token}; Max-Age=${Math.floor(SESSION_TTL_MS/1000)}; Path=/; HttpOnly; SameSite=Lax${isProd?'; Secure':''}`)
+  res.cookie?.(SESSION_COOKIE, token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: isProd,
+    maxAge: SESSION_TTL_MS,
+    path: '/',
+  }) || res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${token}; Max-Age=${Math.floor(SESSION_TTL_MS/1000)}; Path=/; HttpOnly; SameSite=Lax${isProd?'; Secure':''}`)
   res.json({ ok: true, user: { id: u.id, username: u.username, is_admin: !!u.is_admin, root_path: u.root_path || '' } })
 })
 
@@ -401,20 +425,6 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
     res.json({ ok: true, id: info.lastInsertRowid })
   } catch (e) {
     if (String(e.message).includes('UNIQUE')) return res.status(409).json({ error: 'username exists' })
-    res.status(500).json({ error: e.message })
-  }
-})
-app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
-  const id = Number(req.params.id)
-  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
-  if (req.user?.id === id) return res.status(400).json({ error: 'cannot delete your own account' })
-  try {
-    const stmt = db.prepare('DELETE FROM users WHERE id = ?')
-    const info = stmt.run(id)
-    if (info.changes === 0) return res.status(404).json({ error: 'not found' })
-    try { db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id) } catch {}
-    res.json({ ok: true })
-  } catch (e) {
     res.status(500).json({ error: e.message })
   }
 })
@@ -542,6 +552,7 @@ app.post('/download/batch', requireAuth, async (req, res) => {
       const part = db.prepare(`SELECT id, path, fname, folder FROM images WHERE id IN (${marks})`).all(...chunk)
       rows = rows.concat(part)
     }
+    // scope filter
     const scope = req.user.root_path || ''
     rows = rows.filter(r => inScope(scope, r.folder))
     if (rows.length === 0) return res.status(404).json({ error: 'not found' })
@@ -569,12 +580,22 @@ app.post('/download/batch', requireAuth, async (req, res) => {
   }
 })
 
-/* SPA fallback for everything not starting with our API/media paths */
-app.get('*', (req, res, next) => {
-  const p = req.path || ''
-  if (p.startsWith('/api') || p.startsWith('/thumb') || p.startsWith('/media') || p.startsWith('/download')) return next()
-  if (!fs.existsSync(path.join(STATIC_DIR, 'index.html'))) return next()
-  res.sendFile(path.join(STATIC_DIR, 'index.html'))
+/* delete user */
+app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
+  // prevent deleting yourself to avoid lockout
+  if (req.user?.id === id) return res.status(400).json({ error: 'cannot delete your own account' })
+  try {
+    const stmt = db.prepare('DELETE FROM users WHERE id = ?')
+    const info = stmt.run(id)
+    if (info.changes === 0) return res.status(404).json({ error: 'not found' })
+    // also clear sessions for that user
+    try { db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id) } catch {}
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
 })
 
 /* Debug 404 (keep last) */
