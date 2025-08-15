@@ -10,7 +10,7 @@ const apiUrl = (path) => `${API_BASE}${path.startsWith('/') ? path : `/${path}`}
 
 /* ----- API ----- */
 const API = {
-  /* auth (note the /api prefix) */
+  /* auth */
   me: async () => (await fetch(apiUrl('/api/auth/me'), { credentials: 'include' })).json(),
   login: async (username, password) =>
     (await fetch(apiUrl('/api/auth/login'), {
@@ -57,38 +57,42 @@ const GlassShell = ({ children }) => (
   </div>
 )
 
-function SidebarTree({ tree, open, toggle, select, selected, onSignOut, user, onGoAdmin }) {
+/* Scrollable tree ONLY (header label + tree) */
+function SidebarTreeContent({ tree, open, toggle, select, selected }) {
   if (!tree) return null
   return (
-    <div className="h-full min-h-0 flex flex-col">
-      {/* scrollable tree area */}
-      <div className="flex-1 overflow-auto p-2 pr-1" style={{ WebkitOverflowScrolling: 'touch' }}>
-        <div className="flex items-center gap-2 text-slate-300 mb-2 px-2">
-          <FolderTree className="w-5 h-5" />
-          <span className="text-sm font-medium">Folders</span>
-        </div>
+    <div className="min-h-0 flex-1 overflow-y-auto p-2 pr-1" style={{ WebkitOverflowScrolling: 'touch' }}>
+      <div className="flex items-center gap-2 text-slate-300 mb-2 px-2 shrink-0">
+        <FolderTree className="w-5 h-5" />
+        <span className="text-sm font-medium">Folders</span>
+      </div>
+      <div className="overflow-y-auto" style={{ height: 'calc(100% - 40px)' }}>
         <TreeNode node={tree} depth={0} open={open} toggle={toggle} select={select} selected={selected} />
       </div>
+    </div>
+  )
+}
 
-      {/* pinned footer (never hidden) */}
-      <div className="shrink-0 border-t border-white/10 p-2 flex items-center gap-2 bg-zinc-950">
-        {user?.is_admin && (
-          <button
-            className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
-            onClick={onGoAdmin}
-            title="Admin panel"
-          >
-            <Shield className="w-4 h-4" /> Admin
-          </button>
-        )}
+/* Pinned footer */
+function SidebarFooter({ onSignOut, user, onGoAdmin }) {
+  return (
+    <div className="shrink-0 border-t border-white/10 p-2 flex items-center gap-2 bg-zinc-950">
+      {user?.is_admin && (
         <button
-          className="ml-auto inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
-          onClick={onSignOut}
-          title="Sign out"
+          className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+          onClick={onGoAdmin}
+          title="Admin panel"
         >
-          <LogOut className="w-4 h-4" /> Sign out
+          <Shield className="w-4 h-4" /> Admin
         </button>
-      </div>
+      )}
+      <button
+        className="ml-auto inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+        onClick={onSignOut}
+        title="Sign out"
+      >
+        <LogOut className="w-4 h-4" /> Sign out
+      </button>
     </div>
   )
 }
@@ -171,11 +175,11 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [authChecked, setAuthChecked] = useState(false)
 
-  // app view: 'photos' | 'admin'
+  // app view
   const [view, setView] = useState('photos')
 
   // Sidebar + layout
-  // Default: OPEN on desktop, COLLAPSED on mobile (and stay collapsed on refresh)
+  // OPEN on desktop, COLLAPSED on mobile by default
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     try { return !window.matchMedia('(max-width: 640px)').matches } catch { return true }
   })
@@ -184,7 +188,7 @@ export default function App() {
   // Folder/tree
   const [tree, setTree] = useState(null)
   const [open, setOpen] = useState(new Set())
-  const [selected, setSelected] = useState('') // server gives root per scope
+  const [selected, setSelected] = useState('')
 
   // Photos & paging
   const [photos, setPhotos] = useState([])
@@ -208,19 +212,19 @@ export default function App() {
   // Grid sizing
   const scrollRef = useRef(null)
   const sentinelRef = useRef(null)
-  const [tileMin, setTileMin] = useState(120) // controls min column width
+  const [tileMin, setTileMin] = useState(120)
   const [resizeOpen, setResizeOpen] = useState(false)
   const resizeRef = useRef(null)
   const [resizing, setResizing] = useState(false)
 
-  // Deduper & loader control
+  // loader control
   const photoIdsRef = useRef(new Set())
   const requestKey = useMemo(() => `${user?.id || 0}::${selected}`, [user?.id, selected])
   const lastKeyRef = useRef(null)
   const controllerRef = useRef(null)
   const inFlightRef = useRef(false)
 
-  // On mount, check session and fetch tree if logged in
+  // session check
   useEffect(() => {
     (async () => {
       try {
@@ -231,7 +235,7 @@ export default function App() {
           setTree(t)
           setOpen(new Set([t.path]))
           setSelected(t.path)
-          // DO NOT force-open sidebar here; initial state already respects mobile/desktop
+          // keep sidebar default state (don't force-open on mobile)
         } else {
           setUser(null)
         }
@@ -243,7 +247,6 @@ export default function App() {
     })()
   }, [])
 
-  // Expand/collapse folders in the sidebar tree
   const toggle = useCallback((p) => {
     setOpen(prev => {
       const n = new Set(prev)
@@ -252,7 +255,7 @@ export default function App() {
     })
   }, [])
 
-  // Close resize popover on outside click
+  // popover outside click
   useEffect(() => {
     if (!resizeOpen) return
     const onDoc = (e) => { if (!resizeRef.current) return; if (!resizeRef.current.contains(e.target)) setResizeOpen(false) }
@@ -260,14 +263,14 @@ export default function App() {
     return () => document.removeEventListener('mousedown', onDoc)
   }, [resizeOpen])
 
-  // Resize indicator debounce
+  // resize indicator debounce
   useEffect(() => {
     if (!resizing) return
     const t = setTimeout(() => setResizing(false), 250)
     return () => clearTimeout(t)
   }, [tileMin, resizing])
 
-  // Loader (first + subsequent pages)
+  // Loader
   useEffect(() => {
     if (!user) return
     const controller = new AbortController()
@@ -344,7 +347,7 @@ export default function App() {
   const next = () => setViewer(v => ({ ...v, index: Math.min(v.index + 1, photos.length - 1) }))
   const prev = () => setViewer(v => ({ ...v, index: Math.max(v.index - 1, 0) }))
 
-  // Ensure metadata when info opens or photo changes
+  // meta
   const ensureMeta = useCallback(async (id) => {
     if (!id) return null
     if (metaCacheRef.current.has(id)) {
@@ -364,7 +367,6 @@ export default function App() {
       return null
     }
   }, [])
-
   useEffect(() => {
     if (!viewer.open) return
     const cur = photos[viewer.index]
@@ -372,7 +374,7 @@ export default function App() {
     if (infoOpen) { ensureMeta(cur.id) }
   }, [viewer.open, viewer.index, infoOpen, photos, ensureMeta])
 
-  // Keyboard nav
+  // keys
   useEffect(() => {
     const onKey = (e) => {
       if (!viewer.open) return
@@ -384,7 +386,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [viewer.open, photos.length])
 
-  // Download single
+  // download single
   const downloadActive = useCallback(async () => {
     const current = photos[viewer.index]
     if (!current) return
@@ -405,7 +407,7 @@ export default function App() {
     }
   }, [photos, viewer.index])
 
-  // Touch swipe
+  // touch swipe
   const touchStartRef = useRef({ x: 0, y: 0, t: 0 })
   const onTouchStart = (e) => {
     const t = e.touches[0]
@@ -432,7 +434,7 @@ export default function App() {
     }
   }
 
-  // Multi-select
+  // multi-select
   const toggleSelectId = (id) => {
     setSelectedIds(prev => {
       const n = new Set(prev)
@@ -492,7 +494,6 @@ export default function App() {
             setTree(t)
             setOpen(new Set([t.path]))
             setSelected(t.path)
-            // Keep sidebar collapsed on mobile by default; do not force-open here
           }
         }}
       />
@@ -514,38 +515,41 @@ export default function App() {
           className="h-full min-h-0 grid"
           style={{ gridTemplateColumns: (!isSmall && sidebarOpen) ? `${Math.round(sidebarWidth)}px 1fr` : '1fr' }}
         >
-          {/* Desktop Sidebar (only when open) */}
-          {!isSmall && sidebarOpen && (
-            <aside className="relative h-full flex flex-col border-r border-white/10 bg-zinc-950">
-              <div className="flex items-center gap-2 p-3 border-b border-white/10">
-                <ImageIcon className="w-5 h-5 text-slate-200" />
-                <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
-                <button
-                  className="ml-auto inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10"
-                  onClick={() =>
-                    API.rescan().then(() =>
-                      API.tree().then(t => { setTree(t); setOpen(new Set([t.path])); setSelected(t.path) })
-                    )
-                  }
-                  title="Rescan Library"
-                >
-                  <RefreshCcw className="w-4 h-4" /> Rescan
-                </button>
-              </div>
+                     {/* Desktop Sidebar */}
+           {!isSmall && sidebarOpen && (
+             <aside className="relative h-full flex flex-col border-r border-white/10 bg-zinc-950 overflow-hidden">
+               {/* Top bar inside sidebar */}
+               <div className="shrink-0 flex items-center gap-2 p-3 border-b border-white/10">
+                 <ImageIcon className="w-5 h-5 text-slate-200" />
+                 <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
+                 <button
+                   className="ml-auto inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10"
+                   onClick={() =>
+                     API.rescan().then(() =>
+                       API.tree().then(t => { setTree(t); setOpen(new Set([t.path])); setSelected(t.path) })
+                     )
+                   }
+                   title="Rescan Library"
+                 >
+                   <RefreshCcw className="w-4 h-4" /> Rescan
+                 </button>
+               </div>
 
-              {/* Let the child control scrolling; no overflow-hidden here */}
-              <div className="min-h-0 flex-1">
-                <SidebarTree
-                  tree={tree}
-                  open={open}
-                  toggle={toggle}
-                  select={setSelected}
-                  selected={selected}
-                  user={user}
-                  onGoAdmin={() => setView('admin')}
-                  onSignOut={async () => { await API.logout(); setUser(null) }}
-                />
-              </div>
+               {/* Scrollable tree in the middle */}
+               <SidebarTreeContent
+                 tree={tree}
+                 open={open}
+                 toggle={toggle}
+                 select={setSelected}
+                 selected={selected}
+               />
+
+               {/* Pinned footer */}
+               <SidebarFooter
+                 user={user}
+                 onGoAdmin={() => setView('admin')}
+                 onSignOut={async () => { await API.logout(); setUser(null) }}
+               />
 
               {/* Resize handle */}
               <div
@@ -581,7 +585,7 @@ export default function App() {
             {/* Header */}
             <header className="relative z-20 p-3 border-b border-white/10 bg-zinc-950">
               <div className="flex items-center gap-3">
-                {/* Toggle always visible; opens and closes the sidebar */}
+                {/* Toggle */}
                 <button
                   className="inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10"
                   onClick={() => setSidebarOpen(v => !v)}
@@ -590,7 +594,7 @@ export default function App() {
                   <Menu className="w-5 h-5 text-slate-200" />
                 </button>
 
-                {/* Brand in header ONLY when desktop & sidebar is closed */}
+                {/* Brand when sidebar closed (desktop) */}
                 {!isSmall && !sidebarOpen && (
                   <div className="flex items-center gap-2">
                     <ImageIcon className="w-5 h-5 text-slate-200" />
@@ -696,7 +700,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* Grid (auto-fill columns, tiny gap, no borders) */}
+              {/* Grid */}
               <div
                 className="grid"
                 style={{
@@ -736,7 +740,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Mobile sidebar drawer (toggle opens/closes) */}
+      {/* Mobile sidebar drawer */}
       {isSmall && sidebarOpen && (
         <div className="fixed inset-0 z-50">
           <button
@@ -746,7 +750,6 @@ export default function App() {
           />
           <aside className="absolute inset-y-0 left-0 w-[82vw] max-w-[320px] bg-zinc-950 border-r border-white/10 shadow-xl flex flex-col">
             <div className="flex items-center gap-2 p-3 border-b border-white/10">
-              {/* Hamburger inside drawer to close */}
               <button
                 className="inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10"
                 onClick={() => setSidebarOpen(false)}
@@ -759,18 +762,21 @@ export default function App() {
               <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
               <div className="ml-auto" />
             </div>
-            <div className="min-h-0 flex-1">
-              <SidebarTree
-                tree={tree}
-                open={open}
-                toggle={toggle}
-                select={(p) => { setSelected(p); setSidebarOpen(false) }}
-                selected={selected}
-                user={user}
-                onGoAdmin={() => { setView('admin'); setSidebarOpen(false) }}
-                onSignOut={async () => { await API.logout(); setUser(null) }}
-              />
-            </div>
+
+            {/* Scrollable middle on mobile too (unchanged) */}
+            <SidebarTreeContent
+              tree={tree}
+              open={open}
+              toggle={toggle}
+              select={(p) => { setSelected(p); setSidebarOpen(false) }}
+              selected={selected}
+            />
+
+            <SidebarFooter
+              user={user}
+              onGoAdmin={() => { setView('admin'); setSidebarOpen(false) }}
+              onSignOut={async () => { await API.logout(); setUser(null) }}
+            />
           </aside>
         </div>
       )}
