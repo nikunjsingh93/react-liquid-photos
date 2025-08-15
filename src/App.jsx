@@ -202,7 +202,8 @@ export default function App() {
 
   // Deduper & loader control
   const photoIdsRef = useRef(new Set())
-  const requestKey = useMemo(() => `${selected}`, [selected])
+  // IMPORTANT: include user id in the requestKey so switching accounts resets lists and dedupe
+  const requestKey = useMemo(() => `${user?.id || 0}::${selected}`, [user?.id, selected])
   const lastKeyRef = useRef(null)
   const controllerRef = useRef(null)
   const inFlightRef = useRef(false)
@@ -262,6 +263,7 @@ export default function App() {
     controllerRef.current = controller
 
     const run = async () => {
+      // reset lists when the key (user+folder) changes
       if (lastKeyRef.current !== requestKey) {
         lastKeyRef.current = requestKey
         photoIdsRef.current = new Set()
@@ -503,7 +505,7 @@ export default function App() {
         >
           {/* Desktop Sidebar (only when open) */}
           {!isSmall && sidebarOpen && (
-            <aside className="relative border-r border-white/10 bg-zinc-950">
+            <aside className="relative h-full flex flex-col border-r border-white/10 bg-zinc-950">
               <div className="flex items-center gap-2 p-3 border-b border-white/10">
                 <ImageIcon className="w-5 h-5 text-slate-200" />
                 <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
@@ -519,16 +521,21 @@ export default function App() {
                   <RefreshCcw className="w-4 h-4" /> Rescan
                 </button>
               </div>
-              <SidebarTree
-                tree={tree}
-                open={open}
-                toggle={toggle}
-                select={setSelected}
-                selected={selected}
-                user={user}
-                onGoAdmin={() => setView('admin')}
-                onSignOut={async () => { await API.logout(); setUser(null) }}
-              />
+
+              {/* Make inner content fill and keep footer pinned */}
+              <div className="min-h-0 flex-1">
+                <SidebarTree
+                  tree={tree}
+                  open={open}
+                  toggle={toggle}
+                  select={setSelected}
+                  selected={selected}
+                  user={user}
+                  onGoAdmin={() => setView('admin')}
+                  onSignOut={async () => { await API.logout(); setUser(null) }}
+                />
+              </div>
+
               {/* Resize handle */}
               <div
                 className="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-white/10"
@@ -601,21 +608,8 @@ export default function App() {
                   </button>
                 )}
 
-                {/* Right side controls */}
+                {/* Right side controls (no Sign out in header anymore) */}
                 <div className="ml-auto flex items-center gap-2">
-                  {/* Sign out (desktop header) */}
-                  {!isSmall && (
-                    <button
-                      className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
-                      title="Sign out"
-                      onClick={async () => { await API.logout(); setUser(null) }}
-                    >
-                      <LogOut className="w-4 h-4" />
-                      <span className="text-xs hidden sm:block">Sign out</span>
-                    </button>
-                  )}
-
-                  {/* Resize */}
                   <div ref={resizeRef} className="relative">
                     <button
                       className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
@@ -741,7 +735,7 @@ export default function App() {
           />
           <aside className="absolute inset-y-0 left-0 w-[82vw] max-w-[320px] bg-zinc-950 border-r border-white/10 shadow-xl flex flex-col">
             <div className="flex items-center gap-2 p-3 border-b border-white/10">
-              {/* NEW: hamburger in the sidebar header to close it */}
+              {/* Hamburger inside drawer to close */}
               <button
                 className="inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10"
                 onClick={() => setSidebarOpen(false)}
