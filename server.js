@@ -14,7 +14,7 @@ import archiver from 'archiver'
 
 /* ---------- config ---------- */
 const ROOT = process.cwd()
-const PHOTOS_ROOT = process.env.PHOTOS_PATH
+const PHOTOS_ROOT = process.env.PHOTOS_PATH || '/pictures';
 if (!PHOTOS_ROOT) {
   console.error('Please set PHOTOS_PATH in .env')
   process.exit(1)
@@ -27,13 +27,10 @@ const THUMBS_DIR = path.join(CACHE_DIR, 'thumbs')
 const THUMB_WIDTH = Number(process.env.THUMB_WIDTH || 512)
 const DB_CACHE_SIZE_MB = Number(process.env.DB_CACHE_SIZE_MB || 256)
 
-/* ---- watcher config via env (Option 3) ----
-   Default: disabled to avoid ENOSPC on big libraries.
-   Set WATCH_ENABLED=1 to turn on live watching.
-*/
-const WATCH_ENABLED = (process.env.WATCH_ENABLED ?? '0') !== '0' // "1" => enabled
-const WATCH_DEPTH   = Number(process.env.WATCH_DEPTH || 99)      // limit depth if desired
-const WATCH_POLL    = (process.env.WATCH_POLL || '0') === '1'    // fallback to polling
+/* ---- watcher controls (disabled by default to avoid ENOSPC) ---- */
+const WATCH_ENABLED = (process.env.WATCH_ENABLED ?? '0') !== '0'
+const WATCH_DEPTH = Number(process.env.WATCH_DEPTH || 99)
+const WATCH_POLL = (process.env.WATCH_POLL || '0') === '1'
 const WATCH_IGNORED = (process.env.WATCH_IGNORED || '')
   .split(',')
   .map(s => s.trim())
@@ -254,6 +251,7 @@ if (empty) { await scanAndIndex() }
 
 /* ---------- watch filesystem (optional) ---------- */
 if (WATCH_ENABLED) {
+  console.log(`[watch] enabled (depth=${WATCH_DEPTH}, polling=${WATCH_POLL ? 'on' : 'off'})`)
   const watcher = chokidar.watch(PHOTOS_ROOT, {
     ignoreInitial: true,
     depth: WATCH_DEPTH,
@@ -276,13 +274,11 @@ if (WATCH_ENABLED) {
     .on('unlink', (abs) => {
       db.prepare('DELETE FROM images WHERE path=?').run(rel(abs))
     })
-    .on('error', (err) => {
-      console.error('[watcher] error:', err?.message || err)
+    .on('error', (e) => {
+      console.warn('[watch] error:', e?.message || e)
     })
-
-  console.log(`[watcher] enabled (depth=${WATCH_DEPTH}, polling=${WATCH_POLL}, ignored=${WATCH_IGNORED.join(' | ') || 'none'})`)
 } else {
-  console.log('[watcher] disabled (use /api/index or the “Rescan” button to refresh)')
+  console.log('[watch] disabled. Use POST /api/index to rescan, or set WATCH_ENABLED=1 to enable live watching.')
 }
 
 /* ---------- auth helpers ---------- */
@@ -580,7 +576,7 @@ app.post('/download/batch', requireAuth, async (req, res) => {
   }
 })
 
-/* delete user */
+// delete user
 app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
   const id = Number(req.params.id)
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
@@ -605,6 +601,5 @@ app.use('*', (req, res) => {
 })
 
 app.listen(PORT, HOST, () => {
-  console.log(`API+Web on http://${HOST}:${PORT}`)
-  console.log(`Photos root: ${PHOTOS_ROOT}`)
+  console.log(`API on http://${HOST}:${PORT} (scanning: ${ PHOTOS_ROOT })`)
 })
