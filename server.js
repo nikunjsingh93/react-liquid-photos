@@ -14,11 +14,7 @@ import archiver from 'archiver'
 
 /* ---------- config ---------- */
 const ROOT = process.cwd()
-const PHOTOS_ROOT = process.env.PHOTOS_PATH || '/pictures';
-if (!PHOTOS_ROOT) {
-  console.error('Please set PHOTOS_PATH in .env')
-  process.exit(1)
-}
+const PHOTOS_ROOT = process.env.PHOTOS_PATH || '/pictures'
 const PORT = Number(process.env.PORT || 5174)
 const HOST = process.env.HOST || '127.0.0.1'
 const CACHE_DIR = path.join(ROOT, '.cache')
@@ -139,11 +135,9 @@ function ensureColumn(table, specSql, colName, indexSql = null) {
     if (indexSql) db.exec(indexSql)
   }
 }
-// ensure sessions has token/created_at/expires_at (old DBs may be missing token)
 ensureColumn('sessions', 'token TEXT', 'token', 'CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token)')
 ensureColumn('sessions', 'created_at INTEGER NOT NULL DEFAULT 0', 'created_at')
 ensureColumn('sessions', 'expires_at INTEGER NOT NULL DEFAULT 0', 'expires_at')
-// ensure users has is_admin/root_path if very old
 ensureColumn('users', 'is_admin INTEGER NOT NULL DEFAULT 0', 'is_admin')
 ensureColumn('users', 'root_path TEXT', 'root_path')
 
@@ -173,7 +167,7 @@ async function scanAndIndex() {
     try {
       const st = await fsp.stat(abs)
       const r = rel(abs)
-      const folder = toPosix(path.dirname(r)) // root files ⇒ '.'
+      const folder = toPosix(path.dirname(r))
       const fname = path.basename(abs)
       ops.push(() => insertStmt.run(r, fname, folder, Math.floor(st.ctimeMs), Math.floor(st.mtimeMs), st.size))
       count++
@@ -202,7 +196,6 @@ function buildTreeForScope(scopePath /* posix, '' for whole */) {
   const upper = scopePath + '\uFFFF'
   const rows = db.prepare(`SELECT DISTINCT folder FROM images WHERE folder >= ? AND folder < ?`).all(lower, upper)
 
-  // root node name
   let rootName = path.basename(PHOTOS_ROOT) || '/'
   if (scopePath) {
     const parts = scopePath.split('/').filter(Boolean)
@@ -210,7 +203,6 @@ function buildTreeForScope(scopePath /* posix, '' for whole */) {
   }
   const root = { name: rootName, path: '', count: 0, children: [] }
 
-  // Map of relative (to scope) node path → node
   const map = new Map([['', root]])
 
   for (const { folder } of rows) {
@@ -308,7 +300,6 @@ const anyAdmin = db.prepare(`SELECT id FROM users WHERE is_admin = 1 LIMIT 1`)
 /* admin bootstrap */
 function normalizeScopeInput(input) {
   if (!input) return ''
-  // Convert to posix relative to PHOTOS_ROOT; reject if outside
   let p = input
   if (path.isAbsolute(p)) {
     const relp = path.relative(PHOTOS_ROOT, p)
@@ -334,8 +325,7 @@ function authOptional(req, _res, next) {
   req.user = null
   const cookies = parseCookies(req)
   const token = cookies[SESSION_COOKIE]
-  if (!token) return next()
-  const row = getSession.get(token)
+  const row = token ? getSession.get(token) : null
   if (!row) return next()
   if (row.expires_at < nowMs()) { try { deleteSession.run(token) } catch {} ; return next() }
   req.user = { id: row.user_id, username: row.username, is_admin: !!row.is_admin, root_path: row.root_path ? toPosix(row.root_path) : '' }
@@ -548,7 +538,6 @@ app.post('/download/batch', requireAuth, async (req, res) => {
       const part = db.prepare(`SELECT id, path, fname, folder FROM images WHERE id IN (${marks})`).all(...chunk)
       rows = rows.concat(part)
     }
-    // scope filter
     const scope = req.user.root_path || ''
     rows = rows.filter(r => inScope(scope, r.folder))
     if (rows.length === 0) return res.status(404).json({ error: 'not found' })
@@ -576,23 +565,22 @@ app.post('/download/batch', requireAuth, async (req, res) => {
   }
 })
 
-// delete user
-app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
-  const id = Number(req.params.id)
-  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
-  // prevent deleting yourself to avoid lockout
-  if (req.user?.id === id) return res.status(400).json({ error: 'cannot delete your own account' })
-  try {
-    const stmt = db.prepare('DELETE FROM users WHERE id = ?')
-    const info = stmt.run(id)
-    if (info.changes === 0) return res.status(404).json({ error: 'not found' })
-    // also clear sessions for that user
-    try { db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id) } catch {}
-    res.json({ ok: true })
-  } catch (e) {
-    res.status(500).json({ error: e.message })
+/* ---------- SPA static hosting (serve built frontend) ---------- */
+const DIST_DIR = path.join(ROOT, 'dist')
+try {
+  if (fs.existsSync(DIST_DIR)) {
+    app.use(express.static(DIST_DIR, { maxAge: '1h', setHeaders: (res) => res.setHeader('Cache-Control', 'public, max-age=3600') }))
+    // SPA fallback for any non-API, non-media route:
+    app.get(/^\/(?!api|thumb|media|download)(.*)/, (_req, res) => {
+      res.sendFile(path.join(DIST_DIR, 'index.html'))
+    })
+    console.log('Static frontend:', DIST_DIR)
+  } else {
+    console.warn('Static frontend not found at', DIST_DIR, '(requests to / will 404)')
   }
-})
+} catch (e) {
+  console.warn('Static setup error:', e?.message || e)
+}
 
 /* Debug 404 (keep last) */
 app.use('*', (req, res) => {
@@ -601,5 +589,6 @@ app.use('*', (req, res) => {
 })
 
 app.listen(PORT, HOST, () => {
-  console.log(`API on http://${HOST}:${PORT} (scanning: ${ PHOTOS_ROOT })`)
+  console.log(`API+Web on http://${HOST}:${PORT}`)
+  console.log(`Photos root: ${PHOTOS_ROOT}`)
 })
