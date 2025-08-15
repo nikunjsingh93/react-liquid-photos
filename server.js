@@ -11,14 +11,12 @@ import Database from 'better-sqlite3'
 import sharp from 'sharp'
 import mime from 'mime-types'
 import archiver from 'archiver'
-import { fileURLToPath } from 'url'
 
 /* ---------- config ---------- */
 const ROOT = process.cwd()
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PHOTOS_ROOT = process.env.PHOTOS_PATH || '/pictures'
 const PORT = Number(process.env.PORT || 5174)
-const HOST = process.env.HOST || '127.0.0.1'
+const HOST = process.env.HOST || '0.0.0.0'
 const CACHE_DIR = path.join(ROOT, '.cache')
 const DB_PATH = path.join(CACHE_DIR, 'index.db')
 const THUMBS_DIR = path.join(CACHE_DIR, 'thumbs')
@@ -322,16 +320,93 @@ function ensureAdmin() {
 }
 ensureAdmin()
 
-/* middleware */
+/* ---------- app ---------- */
+const app = express()
+// if behind a proxy/ingress, trust X-Forwarded-* so req.secure works
+app.set('trust proxy', true)
+app.use(cors({ origin: true, credentials: true }))
+app.use(express.json({ limit: '5mb' }))
+
+// Decide whether to set the cookie with `Secure` flag.
+// Rule: if COOKIE_SECURE is explicitly set, use it; else use HTTPS detection.
+function shouldUseSecureCookie(req) {
+  const override = process.env.COOKIE_SECURE
+  if (override !== undefined) return override !== '0'
+  const xfProto = (req.headers['x-forwarded-proto'] || '').toString().split(',')[0].trim().toLowerCase()
+  return req.secure || xfProto === 'https'
+}
+
+// helper to set session cookie consistently
+function setSessionCookie(req, res, value, maxAgeMs) {
+  const secure = shouldUseSecureCookie(req)
+  const attrs = `; Max-Age=${Math.floor(maxAgeMs/1000)}; Path=/; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`
+  if (typeof res.cookie === 'function') {
+    try {
+      res.cookie(SESSION_COOKIE, value, { httpOnly: true, sameSite: 'lax', secure, maxAge: maxAgeMs, path: '/' })
+      return
+    } catch {}
+  }
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${value}${attrs}`)
+}
+
+// helper to clear the cookie
+function clearSessionCookie(req, res) {
+  const secure = shouldUseSecureCookie(req)
+  const attrs = `; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=deleted${attrs}`)
+}
+
+/* auth routes */
+app.post('/api/auth/login', (req, res) => {
+  const { username, password } = req.body || {}
+  if (!username || !password) return res.status(400).json({ error: 'missing credentials' })
+  const u = getUserByUsername.get(String(username).trim())
+  if (!u || !verifyPassword(String(password), u.pass_hash)) return res.status(401).json({ error: 'invalid credentials' })
+  const token = crypto.randomBytes(32).toString('hex')
+  const created = nowMs(), expires = created + SESSION_TTL_MS
+  insertSession.run(u.id, token, created, expires)
+  setSessionCookie(req, res, token, SESSION_TTL_MS)
+  res.json({ ok: true, user: { id: u.id, username: u.username, is_admin: !!u.is_admin, root_path: u.root_path || '' } })
+})
+
+app.get('/api/auth/me', (req, res) => {
+  // lightweight inline optional auth so we can return 401 when missing
+  let user = null
+  try {
+    const cookies = parseCookies(req)
+    const token = cookies[SESSION_COOKIE]
+    if (token) {
+      const row = getSession.get(token)
+      if (row && row.expires_at > nowMs()) {
+        user = { id: row.user_id, username: row.username, is_admin: !!row.is_admin, root_path: row.root_path ? toPosix(row.root_path) : '' }
+      }
+    }
+  } catch {}
+  if (!user) return res.status(401).json({ user: null })
+  res.json({ user })
+})
+
+app.post('/api/auth/logout', (req, res) => {
+  try {
+    const cookies = parseCookies(req)
+    const token = cookies[SESSION_COOKIE]
+    if (token) { try { deleteSession.run(token) } catch {} }
+  } catch {}
+  clearSessionCookie(req, res)
+  res.json({ ok: true })
+})
+
+/* admin/require helpers */
 function authOptional(req, _res, next) {
   req.user = null
-  const cookies = parseCookies(req)
-  const token = cookies[SESSION_COOKIE]
-  if (!token) return next()
-  const row = getSession.get(token)
-  if (!row) return next()
-  if (row.expires_at < nowMs()) { try { deleteSession.run(token) } catch {} ; return next() }
-  req.user = { id: row.user_id, username: row.username, is_admin: !!row.is_admin, root_path: row.root_path ? toPosix(row.root_path) : '' }
+  try {
+    const cookies = parseCookies(req)
+    const token = cookies[SESSION_COOKIE]
+    if (!token) return next()
+    const row = getSession.get(token)
+    if (!row || row.expires_at < nowMs()) return next()
+    req.user = { id: row.user_id, username: row.username, is_admin: !!row.is_admin, root_path: row.root_path ? toPosix(row.root_path) : '' }
+  } catch {}
   next()
 }
 function requireAuth(req, res, next) {
@@ -346,58 +421,6 @@ function requireAdmin(req, res, next) {
     next()
   })
 }
-
-function scopeJoin(scope, relFolder) {
-  const a = (scope || '').trim()
-  const b = (relFolder || '').trim()
-  if (!a) return b
-  if (!b) return a
-  return `${a}/${b}`
-}
-function inScope(scope, folder) {
-  const lower = scope || ''
-  const upper = lower + '\uFFFF'
-  return folder >= lower && folder < upper
-}
-
-/* ---------- api ---------- */
-const app = express()
-app.use(cors({ origin: true, credentials: true }))
-app.use(express.json({ limit: '5mb' }))
-
-/* auth routes */
-app.post('/api/auth/login', (req, res) => {
-  const { username, password } = req.body || {}
-  if (!username || !password) return res.status(400).json({ error: 'missing credentials' })
-  const u = getUserByUsername.get(String(username).trim())
-  if (!u || !verifyPassword(String(password), u.pass_hash)) return res.status(401).json({ error: 'invalid credentials' })
-  const token = crypto.randomBytes(32).toString('hex')
-  const created = nowMs(), expires = created + SESSION_TTL_MS
-  insertSession.run(u.id, token, created, expires)
-  const isProd = process.env.NODE_ENV === 'production'
-  // Same-origin cookies work with Lax; keep Secure only in production/https.
-  res.cookie?.(SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: isProd,
-    maxAge: SESSION_TTL_MS,
-    path: '/',
-  }) || res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${token}; Max-Age=${Math.floor(SESSION_TTL_MS/1000)}; Path=/; HttpOnly; SameSite=Lax${isProd?'; Secure':''}`)
-  res.json({ ok: true, user: { id: u.id, username: u.username, is_admin: !!u.is_admin, root_path: u.root_path || '' } })
-})
-
-app.get('/api/auth/me', authOptional, (req, res) => {
-  if (!req.user) return res.status(401).json({ user: null })
-  res.json({ user: req.user })
-})
-
-app.post('/api/auth/logout', authOptional, (req, res) => {
-  const cookies = parseCookies(req)
-  const token = cookies[SESSION_COOKIE]
-  if (token) { try { deleteSession.run(token) } catch {} }
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax`)
-  res.json({ ok: true })
-})
 
 /* admin routes */
 app.get('/api/admin/users', requireAdmin, (_req, res) => {
@@ -420,6 +443,19 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
 })
 
 /* tree/photos: require auth, scope by user.root_path */
+function scopeJoin(scope, relFolder) {
+  const a = (scope || '').trim()
+  const b = (relFolder || '').trim()
+  if (!a) return b
+  if (!b) return a
+  return `${a}/${b}`
+}
+function inScope(scope, folder) {
+  const lower = scope || ''
+  const upper = lower + '\uFFFF'
+  return folder >= lower && folder < upper
+}
+
 app.get('/api/tree', requireAuth, (req, res) => {
   try { res.json(buildTreeForScope(req.user.root_path || '')) } catch (e) { res.status(500).json({ error: e.message }) }
 })
@@ -438,7 +474,7 @@ app.get('/api/photos', requireAuth, (req, res) => {
 
   try {
     let rows = []
-       , total = 0
+    let total = 0
 
     if (q) {
       const term = q.replace(/\s+/g, ' ')
@@ -586,10 +622,9 @@ app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
 })
 
 /* ---------- static web (serve built UI) ---------- */
-const DIST_DIR = path.join(ROOT, 'dist')  // in the container we copy the built app here
+const DIST_DIR = path.join(ROOT, 'dist')
 if (fs.existsSync(DIST_DIR)) {
   app.use(express.static(DIST_DIR, { fallthrough: true }))
-  // SPA fallback for non-API routes
   app.get('*', (req, res, next) => {
     if (
       req.path.startsWith('/api/') ||
@@ -608,6 +643,10 @@ app.use('*', (req, res) => {
 })
 
 app.listen(PORT, HOST, () => {
+  const cookieMode = (process.env.COOKIE_SECURE !== undefined)
+    ? (process.env.COOKIE_SECURE !== '0' ? 'Secure cookies (forced)' : 'Non-secure cookies (forced)')
+    : 'Auto: Secure on HTTPS, non-secure on HTTP'
   console.log(`API+Web on http://${HOST}:${PORT}`)
   console.log(`Photos root: ${PHOTOS_ROOT}`)
+  console.log(`Cookie mode: ${cookieMode}`)
 })
