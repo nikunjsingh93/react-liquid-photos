@@ -551,6 +551,25 @@ app.post('/download/batch', requireAuth, async (req, res) => {
   }
 })
 
+// server.js (admin routes)
+app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
+  // prevent deleting yourself to avoid lockout
+  if (req.user?.id === id) return res.status(400).json({ error: 'cannot delete your own account' })
+  try {
+    const stmt = db.prepare('DELETE FROM users WHERE id = ?')
+    const info = stmt.run(id)
+    if (info.changes === 0) return res.status(404).json({ error: 'not found' })
+    // also clear sessions for that user
+    try { db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id) } catch {}
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+
 /* Debug 404 (keep last) */
 app.use('*', (req, res) => {
   console.log('[DEBUG] Unhandled route:', req.method, req.originalUrl, 'Body:', req.body)

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import {
   FolderTree, RefreshCcw, Image as ImageIcon, ChevronRight, ChevronDown, X,
-  Maximize2, Download, Menu, Plus, Minus, Info, CheckSquare, LogOut, Shield
+  Maximize2, Download, Menu, Plus, Minus, Info, CheckSquare, LogOut, Shield, Trash2
 } from 'lucide-react'
 
 /* Same-origin base (Vite proxy handles /api, /thumb, /media, /download) */
@@ -30,6 +30,11 @@ const API = {
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+    })).json(),
+  adminDeleteUser: async (id) =>
+    (await fetch(apiUrl(`/api/admin/users/${id}`), {
+      method: 'DELETE',
+      credentials: 'include'
     })).json(),
 
   /* photos */
@@ -202,7 +207,6 @@ export default function App() {
 
   // Deduper & loader control
   const photoIdsRef = useRef(new Set())
-  // IMPORTANT: include user id in the requestKey so switching accounts resets lists and dedupe
   const requestKey = useMemo(() => `${user?.id || 0}::${selected}`, [user?.id, selected])
   const lastKeyRef = useRef(null)
   const controllerRef = useRef(null)
@@ -263,7 +267,6 @@ export default function App() {
     controllerRef.current = controller
 
     const run = async () => {
-      // reset lists when the key (user+folder) changes
       if (lastKeyRef.current !== requestKey) {
         lastKeyRef.current = requestKey
         photoIdsRef.current = new Set()
@@ -608,7 +611,7 @@ export default function App() {
                   </button>
                 )}
 
-                {/* Right side controls (no Sign out in header anymore) */}
+                {/* Right side controls */}
                 <div className="ml-auto flex items-center gap-2">
                   <div ref={resizeRef} className="relative">
                     <button
@@ -851,6 +854,7 @@ function AdminPanel({ user, onClose }) {
   const [error, setError] = useState('')
   const [form, setForm] = useState({ username: '', password: '', path: '' })
   const [creating, setCreating] = useState(false)
+  const [deletingId, setDeletingId] = useState(0)
 
   const load = useCallback(async () => {
     setLoading(true); setError('')
@@ -879,6 +883,20 @@ function AdminPanel({ user, onClose }) {
       setError(e.message)
     } finally {
       setCreating(false)
+    }
+  }
+
+  const deleteUser = async (id, username) => {
+    if (!window.confirm(`Delete user "${username}"? This cannot be undone.`)) return
+    setDeletingId(id); setError('')
+    try {
+      const r = await API.adminDeleteUser(id)
+      if (!r?.ok) throw new Error(r?.error || 'Delete failed')
+      await load()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setDeletingId(0)
     }
   }
 
@@ -929,18 +947,34 @@ function AdminPanel({ user, onClose }) {
               <div className="text-slate-400 text-sm">Loading users…</div>
             ) : (
               <div className="space-y-2 text-sm">
-                {list.map(u => (
-                  <div key={u.id} className="rounded border border-white/10 p-2">
-                    <div className="flex items-center gap-2">
-                      <div className="font-medium">{u.username}</div>
-                      {u.is_admin ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300 border border-yellow-400/30">ADMIN</span> : null}
-                      <div className="ml-auto text-xs text-slate-400">{new Date(u.created_at).toLocaleString()}</div>
+                {list.map(u => {
+                  const isSelf = u.id === user.id
+                  return (
+                    <div key={u.id} className="rounded border border-white/10 p-2">
+                      <div className="flex items-center gap-2">
+                        <div className="font-medium">{u.username}</div>
+                        {u.is_admin ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300 border border-yellow-400/30">ADMIN</span> : null}
+                        <div className="ml-auto text-xs text-slate-400">{new Date(u.created_at).toLocaleString()}</div>
+                      </div>
+                      <div className="mt-2 flex items-center gap-2">
+                        <div className="text-xs text-slate-300">
+                          Scope: <span className="text-slate-100">{u.root_path || <em>full library</em>}</span>
+                        </div>
+                        <div className="ml-auto flex items-center gap-2">
+                          <button
+                            className={`inline-flex items-center gap-1 px-2 py-1 rounded border ${isSelf ? 'opacity-40 cursor-not-allowed' : 'hover:bg-rose-500/15'} bg-rose-500/10 border-rose-500/30 text-rose-300`}
+                            title={isSelf ? 'You cannot delete your own account' : 'Delete user'}
+                            disabled={isSelf || deletingId === u.id}
+                            onClick={() => deleteUser(u.id, u.username)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                            {deletingId === u.id ? 'Deleting…' : 'Delete'}
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-xs text-slate-300 mt-1">
-                      Scope: <span className="text-slate-100">{u.root_path || <em>full library</em>}</span>
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
                 {list.length === 0 && <div className="text-slate-400 text-sm">No users yet.</div>}
               </div>
             )}
