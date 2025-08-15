@@ -551,7 +551,7 @@ app.post('/download/batch', requireAuth, async (req, res) => {
   }
 })
 
-// server.js (admin routes)
+// delete user
 app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
   const id = Number(req.params.id)
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
