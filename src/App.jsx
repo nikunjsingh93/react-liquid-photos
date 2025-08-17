@@ -4,7 +4,7 @@ import {
   Maximize2, Download, Menu, Plus, Minus, Info, CheckSquare, LogOut, Shield, Trash2
 } from 'lucide-react'
 
-/* Same-origin base (Vite proxy handles /api, /thumb, /media, /download) */
+/* Same-origin base (Vite proxy handles /api, /thumb, /view, /media, /download) */
 const API_BASE = window.location.origin
 const apiUrl = (path) => `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`
 
@@ -1044,6 +1044,13 @@ function Viewer({
   isSmall, infoOpen, setInfoOpen, photo, truncatedName, imgMaxHeight,
   onPrev, onNext, onClose, onDownload, ensureMeta, meta, onTouchStart, onTouchMove, onTouchEnd
 }) {
+  const [useFullRes, setUseFullRes] = useState(false)
+  const [imageLoading, setImageLoading] = useState(false)
+
+  // Reset loading state when photo changes
+  useEffect(() => {
+    setImageLoading(false)
+  }, [photo.id])
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex">
       <div className="flex-1 flex flex-col">
@@ -1054,6 +1061,21 @@ function Viewer({
             </div>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            <div className="flex items-center gap-1">
+              <button
+                className={`p-2 rounded-full border border-white/10 hover:bg-white/20 ${useFullRes ? 'bg-white/20' : 'bg-white/10'}`}
+                onClick={() => {
+                  setUseFullRes(!useFullRes)
+                  setImageLoading(true)
+                }}
+                title={useFullRes ? 'Switch to optimized view' : 'Switch to full resolution'}
+              >
+                <Maximize2 className="w-6 h-6 text-white" />
+              </button>
+              <span className="text-xs text-white/70 px-2 py-1 rounded bg-black/30">
+                {useFullRes ? 'Full' : 'Optimized'}
+              </span>
+            </div>
             <button
               className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
               onClick={async () => { setInfoOpen(v => !v); if (!infoOpen) await ensureMeta(photo.id) }}
@@ -1081,13 +1103,21 @@ function Viewer({
         <div className="relative flex-1 flex items-center justify-center px-3 pb-3">
           <button className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={onPrev}>◀</button>
 
+          {imageLoading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+              <div className="text-white text-sm">Loading...</div>
+            </div>
+          )}
+
           <img
-            src={apiUrl(`/media/${photo.id}`)}
+            src={apiUrl(useFullRes ? `/media/${photo.id}` : `/view/${photo.id}`)}
             alt={photo.fname}
             style={{ maxHeight: imgMaxHeight, maxWidth: isSmall && infoOpen ? '94vw' : '92vw' }}
             onTouchStart={onTouchStart}
             onTouchMove={onTouchMove}
             onTouchEnd={onTouchEnd}
+            onLoad={() => setImageLoading(false)}
+            onError={() => setImageLoading(false)}
           />
 
           <button className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={onNext}>▶</button>

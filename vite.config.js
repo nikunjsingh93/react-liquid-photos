@@ -9,6 +9,7 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:5174',
       '/thumb': 'http://localhost:5174',
+      '/view': 'http://localhost:5174',
       '/media': 'http://localhost:5174',
       '/download': 'http://localhost:5174'
     }    

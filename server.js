@@ -20,7 +20,9 @@ const HOST = process.env.HOST || '0.0.0.0'
 const CACHE_DIR = path.join(ROOT, '.cache')
 const DB_PATH = path.join(CACHE_DIR, 'index.db')
 const THUMBS_DIR = path.join(CACHE_DIR, 'thumbs')
+const VIEWS_DIR = path.join(CACHE_DIR, 'views')
 const THUMB_WIDTH = Number(process.env.THUMB_WIDTH || 512)
+const VIEW_WIDTH = Number(process.env.VIEW_WIDTH || 1920)
 const DB_CACHE_SIZE_MB = Number(process.env.DB_CACHE_SIZE_MB || 256)
 
 /* ---- watcher controls (disabled by default to avoid ENOSPC) ---- */
@@ -34,6 +36,7 @@ const WATCH_IGNORED = (process.env.WATCH_IGNORED || '')
 
 fs.mkdirSync(CACHE_DIR, { recursive: true })
 fs.mkdirSync(THUMBS_DIR, { recursive: true })
+fs.mkdirSync(VIEWS_DIR, { recursive: true })
 
 /* ---------- helpers ---------- */
 const toPosix = (p) => p.split(path.sep).join('/')
@@ -186,6 +189,19 @@ async function ensureThumb(absPath) {
     return out
   } catch (e) {
     console.warn('thumb failed', absPath, e.message)
+    return null
+  }
+}
+
+async function ensureView(absPath) {
+  const h = hashPath(absPath)
+  const out = path.join(VIEWS_DIR, `${h}.webp`)
+  try { await fsp.access(out); return out } catch {}
+  try {
+    await sharp(absPath).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
+    return out
+  } catch (e) {
+    console.warn('view failed', absPath, e.message)
     return null
   }
 }
@@ -538,6 +554,18 @@ app.get('/thumb/:id', requireAuth, async (req, res) => {
   if (!thumb) return res.status(500).end()
   res.setHeader('content-type', 'image/webp')
   fs.createReadStream(thumb).pipe(res)
+})
+
+app.get('/view/:id', requireAuth, async (req, res) => {
+  const id = Number(req.params.id)
+  const row = db.prepare('SELECT path, folder FROM images WHERE id=?').get(id)
+  if (!row) return res.status(404).end()
+  if (!inScope(req.user.root_path || '', row.folder)) return res.status(403).end()
+  const abs = path.join(PHOTOS_ROOT, row.path)
+  const view = await ensureView(abs)
+  if (!view) return res.status(500).end()
+  res.setHeader('content-type', 'image/webp')
+  fs.createReadStream(view).pipe(res)
 })
 
 app.get('/media/:id', requireAuth, (req, res) => {
