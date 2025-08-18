@@ -715,23 +715,13 @@ export default function App() {
                     }}
                     title="Filter media type"
                   >
-                    <option value="all">Photos and Videos</option>
+                    <option value="all">Photos & Videos</option>
                     <option value="images">Photos</option>
                     <option value="videos">Videos</option>
                   </select>
                 </div>
 
-                {/* Admin button */}
-                {user?.is_admin && (
-                  <button
-                    className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
-                    onClick={() => setView('admin')}
-                    title="Admin panel"
-                  >
-                    <Shield className="w-4 h-4" /> Admin
-                  </button>
-                )}
-
+                
                 {/* Right side controls */}
                 <div className="ml-auto flex items-center gap-2">
                   <div ref={resizeRef} className="relative">
