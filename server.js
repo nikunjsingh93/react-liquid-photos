@@ -1060,11 +1060,12 @@ app.get('/transcode/:id', requireAuth, async (req, res) => {
     if (maxw || brParam) {
       const vmax = brParam || '10000k'
       const vbuf = (/\d+k$/i.test(vmax) ? `${parseInt(vmax,10)*2}k` : '20M')
-      return { height: 720, vcrf: 16, vmax, vbuf, abitrate: '192k' }
+      return { height: 720, vcrf: 16, vmax, vbuf, abitrate: '192k', fps: 30 }
     }
-    if (q === 'high') return { height: 1080, vcrf: 18, vmax: '14000k', vbuf: '28M', abitrate: '192k' }
-    if (q === 'medium' || q === '720') return { height: 720, vcrf: 21, vmax: '2000k', vbuf: '4M', abitrate: '96k' }
-    return { height: 540, vcrf: 20, vmax: '5000k', vbuf: '10M', abitrate: '160k' }
+    if (q === 'high') return { height: 1080, vcrf: 18, vmax: '14000k', vbuf: '28M', abitrate: '192k', fps: 30 }
+    if (q === 'medium' || q === '720') return { height: 720, vcrf: 21, vmax: '2000k', vbuf: '4M', abitrate: '96k', fps: 24 }
+    // low bandwidth preset: ~1 Mbps video @ 540p, 24fps
+    return { height: 540, vcrf: 23, vmax: '1000k', vbuf: '2M', abitrate: '64k', fps: 24 }
   }
   const preset = pickPreset()
 
@@ -1074,6 +1075,7 @@ app.get('/transcode/:id', requireAuth, async (req, res) => {
     '-i', abs,
     // Force target height (e.g. 720p) with sharp downscaling
     '-vf', `scale=-2:${preset.height}:flags=lanczos`,
+    '-r', String(preset.fps),
     '-c:v', 'libx264', '-preset', 'medium', '-crf', String(preset.vcrf),
     '-profile:v', 'high', '-level', '4.1', '-pix_fmt', 'yuv420p',
     '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',
