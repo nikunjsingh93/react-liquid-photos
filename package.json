@@ -22,7 +22,8 @@
     "react-dom": "^18.2.0",
     "react-virtualized-auto-sizer": "^1.0.20",
     "react-window": "^1.8.9",
-    "sharp": "^0.33.4"
+    "sharp": "^0.33.4",
+    "hls.js": "^1.5.7"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0-alpha.21",

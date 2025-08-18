@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import Hls from 'hls.js'
 import {
   FolderTree, RefreshCcw, Image as ImageIcon, ChevronRight, ChevronDown, X,
   Maximize2, Download, Menu, Plus, Minus, Info, CheckSquare, LogOut, Shield, Trash2, Play
@@ -969,6 +970,47 @@ export default function App() {
 
 function prevLen(arr) { return Array.isArray(arr) ? arr.length : 0 }
 
+/* ----- HLS-capable Video Player ----- */
+function VideoPlayer({ srcOriginal, srcHls, srcReduced, srcLow, mode, style, onTouchStart, onTouchMove, onTouchEnd, poster }) {
+  const videoRef = useRef(null)
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    let hls
+    const wantsHls = (mode === 'original') ? false : true
+    const source = mode === 'low' ? srcLow : (mode === 'reduced' ? srcReduced : srcOriginal)
+
+    // Use HLS for adaptive only when in reduced/low and when Hls.js is supported & source is HLS
+    const useHls = wantsHls && Hls.isSupported() && srcHls
+    if (useHls) {
+      try {
+        hls = new Hls({ maxBufferLength: 30, liveSyncDurationCount: 3 })
+        hls.loadSource(srcHls)
+        hls.attachMedia(video)
+      } catch {}
+    } else {
+      // Fallback to direct MP4 stream (transcode or original)
+      video.src = source
+    }
+    return () => {
+      try { if (hls) hls.destroy() } catch {}
+    }
+  }, [mode, srcOriginal, srcHls, srcReduced, srcLow])
+
+  return (
+    <video
+      ref={videoRef}
+      controls
+      autoPlay={false}
+      style={style}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      poster={poster}
+    />
+  )
+}
+
 /* ----- Login Screen ----- */
 function LoginScreen({ onLoggedIn }) {
   const [username, setUsername] = useState('')
@@ -1287,14 +1329,12 @@ function Viewer({
           )}
 
           {isVideo ? (
-            <video
-              src={apiUrl(
-                quality === 'original'
-                  ? `/media/${photo.id}`
-                  : (quality === 'low' ? `/transcode/${photo.id}?q=low` : `/transcode/${photo.id}?q=720`)
-              )}
-              controls
-              autoPlay={false}
+            <VideoPlayer
+              srcOriginal={apiUrl(`/media/${photo.id}`)}
+              srcHls={apiUrl(`/hls/${photo.id}/master.m3u8`)}
+              srcReduced={apiUrl(`/transcode/${photo.id}?q=720`)}
+              srcLow={apiUrl(`/transcode/${photo.id}?q=low`)}
+              mode={quality}
               style={{
                 maxHeight: imgMaxHeight,
                 maxWidth: isSmall && infoOpen ? '94vw' : '92vw',

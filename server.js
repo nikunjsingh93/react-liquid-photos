@@ -1161,6 +1161,7 @@ app.get('/hls/:id/:height.m3u8', requireAuth, async (req, res) => {
     '-c:a', 'aac', '-ac', '2', '-b:a', cfg.abr,
     '-f', 'hls',
     '-hls_time', '4', '-hls_playlist_type', 'event', '-hls_segment_type', 'mpegts',
+    '-hls_base_url', `/hls/seg/${key}/`,
     '-hls_segment_filename', path.join(outDir, 'seg%04d.ts'),
     path.join(outDir, 'index.m3u8')
   ]
@@ -1187,12 +1188,42 @@ app.get('/hls/:id/:height.m3u8', requireAuth, async (req, res) => {
 
 // HLS segment serving (ts files)
 app.get('/hls/seg/:key/:file', requireAuth, async (req, res) => {
-  const key = String(req.params.key)
-  const file = String(req.params.file)
-  const segPath = path.join(HLS_DIR, key, file)
-  if (!(await fileExists(segPath))) return res.status(404).end()
-  res.setHeader('Content-Type', 'video/MP2T')
-  fs.createReadStream(segPath).pipe(res)
+  try {
+    const key = String(req.params.key)
+    const file = String(req.params.file)
+    const segPath = path.join(HLS_DIR, key, file)
+    if (!(await fileExists(segPath))) return res.status(404).end()
+    res.setHeader('Content-Type', 'video/MP2T')
+    fs.createReadStream(segPath).pipe(res)
+  } catch (e) {
+    res.status(500).end()
+  }
+})
+
+// Back-compat segment handler when playlist used relative paths (/hls/:id/segXXXX.ts)
+app.get('/hls/:id/:file(seg\\d+\\.ts)', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id)
+    const file = String(req.params.file)
+    const row = db.prepare('SELECT path, folder, kind FROM images WHERE id=?').get(id)
+    if (!row) return res.status(404).end()
+    if (!inScope(req.user.root_path || '', row.folder)) return res.status(403).end()
+    const abs = path.join(PHOTOS_ROOT, row.path)
+    const hash = hashPath(abs)
+    // Find a variant dir that contains this segment
+    const entries = await fsp.readdir(HLS_DIR).catch(()=>[])
+    for (const d of entries) {
+      if (!String(d).startsWith(`${hash}_`)) continue
+      const segPath = path.join(HLS_DIR, d, file)
+      if (await fileExists(segPath)) {
+        res.setHeader('Content-Type', 'video/MP2T')
+        return fs.createReadStream(segPath).pipe(res)
+      }
+    }
+    return res.status(404).end()
+  } catch {
+    res.status(500).end()
+  }
 })
 app.get('/download/:id', requireAuth, (req, res) => {
   const id = Number(req.params.id)
