@@ -22,7 +22,7 @@ ENV NODE_ENV=production
 
 # Runtime tools: exiftool for RAW embedded previews
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  exiftool \
+  exiftool libheif-examples \
   && rm -rf /var/lib/apt/lists/*
 
 # Only prod deps
@@ -34,7 +34,7 @@ COPY --from=build /app/server.js ./server.js
 COPY --from=build /app/dist ./dist
 
 # Cache dir (persists via volume)
-RUN mkdir -p .cache/thumbs .cache/views .cache/rawpreviews
+RUN mkdir -p .cache/thumbs .cache/views .cache/rawpreviews .cache/media
 
 # The app will listen on PORT (we’ll set it to 6363 at run time)
 EXPOSE 6363

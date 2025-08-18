@@ -23,6 +23,7 @@ const DB_PATH = path.join(CACHE_DIR, 'index.db')
 const THUMBS_DIR = path.join(CACHE_DIR, 'thumbs')
 const VIEWS_DIR = path.join(CACHE_DIR, 'views')
 const RAW_PREVIEWS_DIR = path.join(CACHE_DIR, 'rawpreviews')
+const MEDIA_PREVIEWS_DIR = path.join(CACHE_DIR, 'media')
 const THUMB_WIDTH = Number(process.env.THUMB_WIDTH || 512)
 const VIEW_WIDTH = Number(process.env.VIEW_WIDTH || 1920)
 const DB_CACHE_SIZE_MB = Number(process.env.DB_CACHE_SIZE_MB || 256)
@@ -40,6 +41,7 @@ fs.mkdirSync(CACHE_DIR, { recursive: true })
 fs.mkdirSync(THUMBS_DIR, { recursive: true })
 fs.mkdirSync(VIEWS_DIR, { recursive: true })
 fs.mkdirSync(RAW_PREVIEWS_DIR, { recursive: true })
+fs.mkdirSync(MEDIA_PREVIEWS_DIR, { recursive: true })
 
 /* ---------- helpers ---------- */
 const toPosix = (p) => p.split(path.sep).join('/')
@@ -159,10 +161,16 @@ const IMG_EXT = new Set([
 ])
 
 const RAW_EXT = new Set(['.dng','.arw','.cr2','.raf','.nef','.rw2'])
+const HEIC_EXT = new Set(['.heic', '.heif'])
 
 function isRawExt(filePath) {
   const ext = path.extname(filePath).toLowerCase()
   return RAW_EXT.has(ext)
+}
+
+function isHeicExt(filePath) {
+  const ext = path.extname(filePath).toLowerCase()
+  return HEIC_EXT.has(ext)
 }
 
 async function fileExists(p) {
@@ -178,7 +186,7 @@ async function ensureRawEmbeddedPreview(absPath) {
   const out = path.join(RAW_PREVIEWS_DIR, `${h}.bin`)
   if (await fileExists(out)) return out
 
-  async function tryExtract(tag) {
+  async function tryExtractToOut(tag) {
     return new Promise((resolve) => {
       const args = ['-b', `-${tag}`, absPath]
       const ex = spawn('exiftool', args, { stdio: ['ignore', 'pipe', 'pipe'] })
@@ -186,30 +194,58 @@ async function ensureRawEmbeddedPreview(absPath) {
       let wrote = 0
       ex.stdout.on('data', (chunk) => { wrote += chunk.length })
       ex.stdout.pipe(ws)
-      let stderrBuf = ''
-      ex.stderr.on('data', (d) => { stderrBuf += String(d) })
       ex.on('close', async (code) => {
         try { ws.close() } catch {}
-        if (code === 0 && wrote > 0) {
-          resolve(true)
-        } else {
-          try { await fsp.unlink(out) } catch {}
-          resolve(false)
-        }
+        if (code === 0 && wrote > 0) resolve(true)
+        else { try { await fsp.unlink(out) } catch {}; resolve(false) }
       })
-      ex.on('error', async () => {
-        try { await fsp.unlink(out) } catch {}
-        resolve(false)
-      })
+      ex.on('error', async () => { try { await fsp.unlink(out) } catch {}; resolve(false) })
     })
   }
 
-  const tags = ['JpgFromRaw', 'PreviewImage', 'BigImage', 'ThumbnailImage']
+  // Prefer JPEG-like embedded previews that are widely present in DNG/RAW files
+  const tags = [
+    'JpgFromRaw',
+    'PreviewImage',
+    // OtherImage sometimes holds JPEG previews in some RAW containers
+    'OtherImage', 'OtherImage1', 'OtherImage2', 'OtherImage3',
+    // Last resort small thumbnail
+    'ThumbnailImage'
+  ]
+
   for (const tag of tags) {
-    const ok = await tryExtract(tag)
-    if (ok) return out
+    const ok = await tryExtractToOut(tag)
+    if (!ok) continue
+    // Validate that sharp can read it; if not, try next tag
+    try {
+      await sharp(out).metadata()
+      return out
+    } catch {
+      try { await fsp.unlink(out) } catch {}
+      continue
+    }
   }
   return null
+}
+
+/**
+ * Decode HEIC/HEIF using heif-convert to a lossless/displayable JPEG for downstream processing.
+ */
+async function ensureHeicDecodedPreview(absPath) {
+  const h = hashPath(absPath)
+  const out = path.join(RAW_PREVIEWS_DIR, `${h}.jpg`)
+  if (await fileExists(out)) return out
+  return new Promise((resolve) => {
+    const args = [absPath, out]
+    const ex = spawn('heif-convert', args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    let stderrBuf = ''
+    ex.stderr.on('data', (d) => { stderrBuf += String(d) })
+    ex.on('close', async (code) => {
+      if (code === 0 && await fileExists(out)) resolve(out)
+      else { try { await fsp.unlink(out) } catch {}; resolve(null) }
+    })
+    ex.on('error', async () => { try { await fsp.unlink(out) } catch {}; resolve(null) })
+  })
 }
 
 async function scanAndIndex() {
@@ -247,10 +283,17 @@ async function ensureThumb(absPath) {
       await sharp(absPath).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
       return out
     } catch (e) {
-      if (!isRawExt(absPath)) throw e
-      const prev = await ensureRawEmbeddedPreview(absPath)
-      if (!prev) throw e
-      await sharp(prev).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
+      if (isRawExt(absPath)) {
+        const prev = await ensureRawEmbeddedPreview(absPath)
+        if (!prev) throw e
+        await sharp(prev).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
+      } else if (isHeicExt(absPath)) {
+        const prev = await ensureHeicDecodedPreview(absPath)
+        if (!prev) throw e
+        await sharp(prev).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
+      } else {
+        throw e
+      }
     }
     return out
   } catch (e) {
@@ -268,10 +311,17 @@ async function ensureView(absPath) {
       await sharp(absPath).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
       return out
     } catch (e) {
-      if (!isRawExt(absPath)) throw e
-      const prev = await ensureRawEmbeddedPreview(absPath)
-      if (!prev) throw e
-      await sharp(prev).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
+      if (isRawExt(absPath)) {
+        const prev = await ensureRawEmbeddedPreview(absPath)
+        if (!prev) throw e
+        await sharp(prev).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
+      } else if (isHeicExt(absPath)) {
+        const prev = await ensureHeicDecodedPreview(absPath)
+        if (!prev) throw e
+        await sharp(prev).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
+      } else {
+        throw e
+      }
     }
     return out
   } catch (e) {
@@ -286,23 +336,33 @@ async function ensureView(absPath) {
  * Returns: { path, contentType }
  */
 async function ensureDisplayableMedia(absPath) {
-  if (!isRawExt(absPath)) {
+  if (!isRawExt(absPath) && !isHeicExt(absPath)) {
     const type = mime.lookup(absPath) || 'application/octet-stream'
     return { path: absPath, contentType: type }
   }
-  const prev = await ensureRawEmbeddedPreview(absPath)
+  // For RAW/HEIC, always provide a web-compatible media preview (WebP) without resizing
+  const h = hashPath(absPath)
+  const out = path.join(MEDIA_PREVIEWS_DIR, `${h}.webp`)
+  try { await fsp.access(out); return { path: out, contentType: 'image/webp' } } catch {}
+  const prev = isHeicExt(absPath) ? await ensureHeicDecodedPreview(absPath) : await ensureRawEmbeddedPreview(absPath)
   if (prev) {
-    let type = 'image/jpeg'
     try {
-      const md = await sharp(prev).metadata()
-      if (md?.format) {
-        if (md.format === 'tiff') type = 'image/tiff'
-        else if (md.format === 'png') type = 'image/png'
-        else if (md.format === 'webp') type = 'image/webp'
-        else type = 'image/jpeg'
-      }
-    } catch {}
-    return { path: prev, contentType: type }
+      await sharp(prev).rotate().webp({ quality: 90 }).toFile(out)
+      return { path: out, contentType: 'image/webp' }
+    } catch (e) {
+      // If transcode fails, stream the preview as-is with best-guess type
+      let type = 'image/jpeg'
+      try {
+        const md = await sharp(prev).metadata()
+        if (md?.format) {
+          if (md.format === 'tiff') type = 'image/tiff'
+          else if (md.format === 'png') type = 'image/png'
+          else if (md.format === 'webp') type = 'image/webp'
+          else type = 'image/jpeg'
+        }
+      } catch {}
+      return { path: prev, contentType: type }
+    }
   }
   // Fallback to original (may not render), but at least downloadable
   const type = mime.lookup(absPath) || 'application/octet-stream'
