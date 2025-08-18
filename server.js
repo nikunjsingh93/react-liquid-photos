@@ -635,8 +635,79 @@ function inScope(scope, folder) {
   return folder >= lower && folder < upper
 }
 
+function ordinal(n) {
+  const s = ['th', 'st', 'nd', 'rd']
+  const v = n % 100
+  return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`
+}
+
+function buildDateTreeForScope(scopePath) {
+  const lower = scopePath || ''
+  const upper = lower + '\uFFFF'
+  const rows = db.prepare(`
+    SELECT
+      CAST(strftime('%Y', mtime/1000, 'unixepoch') AS INTEGER) AS y,
+      CAST(strftime('%m', mtime/1000, 'unixepoch') AS INTEGER) AS m,
+      CAST(strftime('%d', mtime/1000, 'unixepoch') AS INTEGER) AS d,
+      COUNT(*) AS c
+    FROM images
+    WHERE folder >= ? AND folder < ?
+    GROUP BY y, m, d
+    ORDER BY y DESC, m DESC, d DESC
+  `).all(lower, upper)
+
+  const root = { name: 'Dates', path: 'date:', count: 0, children: [] }
+  const yMap = new Map()
+  const ymMap = new Map()
+
+  for (const r of rows) {
+    if (!Number.isFinite(r.y) || !Number.isFinite(r.m) || !Number.isFinite(r.d)) continue
+    const yearKey = r.y
+    let yNode = yMap.get(yearKey)
+    if (!yNode) {
+      yNode = { name: String(yearKey), path: `date:Y-${yearKey}`, count: 0, children: [] }
+      yMap.set(yearKey, yNode)
+      root.children.push(yNode)
+    }
+    yNode.count += r.c
+
+    const monthKey = `${yearKey}-${String(r.m).padStart(2, '0')}`
+    let mNode = ymMap.get(monthKey)
+    if (!mNode) {
+      const dateForName = new Date(Date.UTC(yearKey, r.m - 1, 1))
+      const monthName = dateForName.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' })
+      mNode = { name: monthName, path: `date:M-${yearKey}-${String(r.m).padStart(2, '0')}`, count: 0, children: [] }
+      ymMap.set(monthKey, mNode)
+      yNode.children.push(mNode)
+    }
+    mNode.count += r.c
+
+    const dateForDay = new Date(Date.UTC(r.y, r.m - 1, r.d))
+    const weekday = dateForDay.toLocaleString('en-US', { weekday: 'long', timeZone: 'UTC' })
+    const dName = `${weekday}, ${ordinal(r.d)}`
+    const dPath = `date:D-${r.y}-${String(r.m).padStart(2, '0')}-${String(r.d).padStart(2, '0')}`
+    mNode.children.push({ name: dName, path: dPath, count: r.c, children: [] })
+  }
+
+  const sortRec = (n) => {
+    if (!n.children) return
+    // For dates tree, children already appended in descending order by query
+    n.children.forEach(sortRec)
+  }
+  sortRec(root)
+  root.count = root.children.reduce((a, y) => a + (y.count || 0), 0)
+  return root
+}
+
 app.get('/api/tree', requireAuth, (req, res) => {
-  try { res.json(buildTreeForScope(req.user.root_path || '')) } catch (e) { res.status(500).json({ error: e.message }) }
+  try {
+    const mode = String(req.query.mode || 'folders')
+    if (mode === 'dates') {
+      res.json(buildDateTreeForScope(req.user.root_path || ''))
+    } else {
+      res.json(buildTreeForScope(req.user.root_path || ''))
+    }
+  } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
 app.get('/api/photos', requireAuth, (req, res) => {
@@ -650,6 +721,11 @@ app.get('/api/photos', requireAuth, (req, res) => {
 
   const lower = folder
   const upper = folder + '\uFFFF'
+  const hasFrom = Object.prototype.hasOwnProperty.call(req.query, 'from')
+  const hasTo = Object.prototype.hasOwnProperty.call(req.query, 'to')
+  const useDateRange = hasFrom && hasTo
+  const fromMs = useDateRange ? Number(req.query.from) : 0
+  const toMs = useDateRange ? Number(req.query.to) : 0
 
   try {
     let rows = []
@@ -657,7 +733,30 @@ app.get('/api/photos', requireAuth, (req, res) => {
 
     if (q) {
       const term = q.replace(/\s+/g, ' ')
-      rows = db.prepare(`
+      if (useDateRange) {
+        rows = db.prepare(`
+          SELECT i.id, i.fname, i.folder, i.mtime, i.size
+          FROM images i
+          JOIN images_fts f ON f.rowid = i.id
+          WHERE f MATCH ?
+            AND i.folder >= ?
+            AND i.folder < ?
+            AND i.mtime >= ? AND i.mtime < ?
+          ORDER BY i.mtime DESC, i.id DESC
+          LIMIT ? OFFSET ?
+        `).all(term, userScope, userScope + '\uFFFF', fromMs, toMs, pageSize, offset)
+
+        total = db.prepare(`
+          SELECT COUNT(*) AS c
+          FROM images i
+          JOIN images_fts f ON f.rowid = i.id
+          WHERE f MATCH ?
+            AND i.folder >= ?
+            AND i.folder < ?
+            AND i.mtime >= ? AND i.mtime < ?
+        `).get(term, userScope, userScope + '\uFFFF', fromMs, toMs).c
+      } else {
+        rows = db.prepare(`
         SELECT i.id, i.fname, i.folder, i.mtime, i.size
         FROM images i
         JOIN images_fts f ON f.rowid = i.id
@@ -666,32 +765,53 @@ app.get('/api/photos', requireAuth, (req, res) => {
           AND i.folder < ?
         ORDER BY i.mtime DESC, i.id DESC
         LIMIT ? OFFSET ?
-      `).all(term, lower, upper, pageSize, offset)
+        `).all(term, lower, upper, pageSize, offset)
 
-      total = db.prepare(`
+        total = db.prepare(`
         SELECT COUNT(*) AS c
         FROM images i
         JOIN images_fts f ON f.rowid = i.id
         WHERE f MATCH ?
           AND i.folder >= ?
           AND i.folder < ?
-      `).get(term, lower, upper).c
+        `).get(term, lower, upper).c
+      }
     } else {
-      rows = db.prepare(`
+      if (useDateRange) {
+        rows = db.prepare(`
+          SELECT id, fname, folder, mtime, size
+          FROM images
+          WHERE folder >= ?
+            AND folder < ?
+            AND mtime >= ? AND mtime < ?
+          ORDER BY mtime DESC, id DESC
+          LIMIT ? OFFSET ?
+        `).all(userScope, userScope + '\uFFFF', fromMs, toMs, pageSize, offset)
+
+        total = db.prepare(`
+          SELECT COUNT(*) AS c
+          FROM images
+          WHERE folder >= ?
+            AND folder < ?
+            AND mtime >= ? AND mtime < ?
+        `).get(userScope, userScope + '\uFFFF', fromMs, toMs).c
+      } else {
+        rows = db.prepare(`
         SELECT id, fname, folder, mtime, size
         FROM images
         WHERE folder >= ?
           AND folder < ?
         ORDER BY mtime DESC, id DESC
         LIMIT ? OFFSET ?
-      `).all(lower, upper, pageSize, offset)
+        `).all(lower, upper, pageSize, offset)
 
-      total = db.prepare(`
+        total = db.prepare(`
         SELECT COUNT(*) AS c
         FROM images
         WHERE folder >= ?
           AND folder < ?
-      `).get(lower, upper).c
+        `).get(lower, upper).c
+      }
     }
 
     res.json({ items: rows, total })

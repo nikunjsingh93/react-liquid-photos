@@ -38,7 +38,7 @@ const API = {
     })).json(),
 
   /* photos */
-  tree: async () => (await fetch(apiUrl('/api/tree'), { credentials: 'include' })).json(),
+  tree: async (mode = 'folders') => (await fetch(apiUrl(`/api/tree?mode=${encodeURIComponent(mode)}`), { credentials: 'include' })).json(),
   photos: async (params = {}, options = {}) => {
     const qs = new URLSearchParams(params).toString()
     const r = await fetch(apiUrl(`/api/photos?${qs}`), { credentials: 'include', ...options })
@@ -68,13 +68,25 @@ function isRawName(name) {
 }
 
 /* Scrollable tree ONLY (header label + tree) */
-function SidebarTreeContent({ tree, open, toggle, select, selected }) {
+function SidebarTreeContent({ tree, open, toggle, select, selected, mode = 'folders', onToggleMode }) {
   if (!tree) return null
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-2 pr-1" style={{ WebkitOverflowScrolling: 'touch' }}>
       <div className="flex items-center gap-2 text-slate-300 mb-2 px-2 shrink-0">
         <FolderTree className="w-5 h-5" />
-        <span className="text-sm font-medium">Folders</span>
+        <span className="text-sm font-medium">{mode === 'dates' ? 'Dates' : 'Folders'}</span>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            className={`text-xs px-2 py-0.5 rounded ${mode === 'folders' ? 'bg-white/20' : 'bg-white/10'} border border-white/10`}
+            onClick={() => onToggleMode && onToggleMode('folders')}
+            title="Browse by folders"
+          >Folders</button>
+          <button
+            className={`text-xs px-2 py-0.5 rounded ${mode === 'dates' ? 'bg-white/20' : 'bg-white/10'} border border-white/10`}
+            onClick={() => onToggleMode && onToggleMode('dates')}
+            title="Browse by dates"
+          >Dates</button>
+        </div>
       </div>
       <div className="overflow-y-auto" style={{ height: 'calc(100% - 40px)' }}>
         <TreeNode node={tree} depth={0} open={open} toggle={toggle} select={select} selected={selected} />
@@ -214,6 +226,8 @@ export default function App() {
   const [tree, setTree] = useState(null)
   const [open, setOpen] = useState(new Set())
   const [selected, setSelected] = useState('')
+  const [treeMode, setTreeMode] = useState('folders')
+  const [dateRange, setDateRange] = useState({ from: 0, to: 0 })
 
   // Photos & paging
   const [photos, setPhotos] = useState([])
@@ -244,7 +258,7 @@ export default function App() {
 
   // loader control
   const photoIdsRef = useRef(new Set())
-  const requestKey = useMemo(() => `${user?.id || 0}::${selected}`, [user?.id, selected])
+  const requestKey = useMemo(() => `${user?.id || 0}::${selected}::${treeMode}::${dateRange.from}-${dateRange.to}`,[user?.id, selected, treeMode, dateRange.from, dateRange.to])
   const lastKeyRef = useRef(null)
   const controllerRef = useRef(null)
   const inFlightRef = useRef(false)
@@ -322,10 +336,18 @@ export default function App() {
       inFlightRef.current = true
       setLoading(true)
       try {
-        const r = await API.photos(
-          { folder: selected, q: '', page, pageSize: 200, _t: Date.now() },
-          { signal: controller.signal }
-        )
+        const params = (treeMode === 'dates' && String(selected).startsWith('date:'))
+          ? (() => {
+              const p = { q: '', page, pageSize: 200, _t: Date.now() }
+              if (dateRange.from && dateRange.to) {
+                p.from = dateRange.from; p.to = dateRange.to
+              } else {
+                p.from = 0; p.to = Date.now() + 24*60*60*1000
+              }
+              return p
+            })()
+          : { folder: selected, q: '', page, pageSize: 200, _t: Date.now() }
+        const r = await API.photos(params, { signal: controller.signal })
         if (r?.error) throw new Error(r.error)
         setTotal(Number(r.total || 0))
 
@@ -543,7 +565,7 @@ export default function App() {
                    className="ml-auto inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10"
                    onClick={() =>
                      API.rescan().then(() =>
-                       API.tree().then(t => { setTree(t); setOpen(new Set([t.path])); setSelected(t.path) })
+                       API.tree(treeMode).then(t => { setTree(t); setOpen(new Set([t.path])); setSelected(t.path); setDateRange({ from: 0, to: 0 }) })
                      )
                    }
                    title="Rescan Library"
@@ -557,8 +579,39 @@ export default function App() {
                  tree={tree}
                  open={open}
                  toggle={toggle}
-                 select={setSelected}
+                 select={(p) => {
+                   if (treeMode === 'dates' && String(p).startsWith('date:')) {
+                     const parts = String(p).split(':')[1]
+                     if (parts.startsWith('D-')) {
+                       const [y, m, d] = parts.slice(2).split('-').map(n => parseInt(n, 10))
+                       const from = Date.UTC(y, m - 1, d)
+                       const to = Date.UTC(y, m - 1, d + 1)
+                       setDateRange({ from, to })
+                     } else if (parts.startsWith('M-')) {
+                       const [y, m] = parts.slice(2).split('-').map(n => parseInt(n, 10))
+                       const from = Date.UTC(y, m - 1, 1)
+                       const to = Date.UTC(y, m, 1)
+                       setDateRange({ from, to })
+                     } else if (parts.startsWith('Y-')) {
+                       const y = parseInt(parts.slice(2), 10)
+                       const from = Date.UTC(y, 0, 1)
+                       const to = Date.UTC(y + 1, 0, 1)
+                       setDateRange({ from, to })
+                     }
+                   }
+                   setSelected(p)
+                 }}
                  selected={selected}
+                 mode={treeMode}
+                 onToggleMode={async (nextMode) => {
+                   if (nextMode === treeMode) return
+                   setTreeMode(nextMode)
+                   const t = await API.tree(nextMode)
+                   setTree(t)
+                   setOpen(new Set([t.path]))
+                   setSelected(t.path)
+                   setDateRange({ from: 0, to: 0 })
+                 }}
                />
 
                {/* Pinned footer */}
@@ -810,8 +863,40 @@ export default function App() {
               tree={tree}
               open={open}
               toggle={toggle}
-              select={(p) => { setSelected(p); setSidebarOpen(false) }}
+              select={(p) => {
+                if (treeMode === 'dates' && String(p).startsWith('date:')) {
+                  const parts = String(p).split(':')[1]
+                  if (parts.startsWith('D-')) {
+                    const [y, m, d] = parts.slice(2).split('-').map(n => parseInt(n, 10))
+                    const from = Date.UTC(y, m - 1, d)
+                    const to = Date.UTC(y, m - 1, d + 1)
+                    setDateRange({ from, to })
+                  } else if (parts.startsWith('M-')) {
+                    const [y, m] = parts.slice(2).split('-').map(n => parseInt(n, 10))
+                    const from = Date.UTC(y, m - 1, 1)
+                    const to = Date.UTC(y, m, 1)
+                    setDateRange({ from, to })
+                  } else if (parts.startsWith('Y-')) {
+                    const y = parseInt(parts.slice(2), 10)
+                    const from = Date.UTC(y, 0, 1)
+                    const to = Date.UTC(y + 1, 0, 1)
+                    setDateRange({ from, to })
+                  }
+                }
+                setSelected(p)
+                setSidebarOpen(false)
+              }}
               selected={selected}
+              mode={treeMode}
+              onToggleMode={async (nextMode) => {
+                if (nextMode === treeMode) return
+                setTreeMode(nextMode)
+                const t = await API.tree(nextMode)
+                setTree(t)
+                setOpen(new Set([t.path]))
+                setSelected(t.path)
+                setDateRange({ from: 0, to: 0 })
+              }}
             />
 
             <SidebarFooter
