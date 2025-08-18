@@ -57,6 +57,16 @@ const GlassShell = ({ children }) => (
   </div>
 )
 
+// RAW helpers (match server RAW_EXT)
+const RAW_EXTS = new Set(['.dng', '.arw', '.cr2', '.raf', '.nef', '.rw2'])
+function isRawName(name) {
+  if (!name) return false
+  const i = String(name).lastIndexOf('.')
+  if (i === -1) return false
+  const ext = String(name).slice(i).toLowerCase()
+  return RAW_EXTS.has(ext)
+}
+
 /* Scrollable tree ONLY (header label + tree) */
 function SidebarTreeContent({ tree, open, toggle, select, selected }) {
   if (!tree) return null
@@ -702,6 +712,7 @@ export default function App() {
               >
                 {photos.map((p, i) => {
                   const isSel = selectedIds.has(p.id)
+                  const isRaw = isRawName(p.fname)
                   return (
                     <button
                       key={p.id}
@@ -714,8 +725,13 @@ export default function App() {
                         loading="lazy"
                         className="h-full w-full object-cover"
                       />
+                      {isRaw && (
+                        <div className="absolute left-1 top-1 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded">
+                          RAW
+                        </div>
+                      )}
                       {selectMode && (
-                        <div className="absolute left-1 top-1 bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded">
+                        <div className={`absolute left-1 ${isRaw ? 'top-6' : 'top-1'} bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded`}>
                           {isSel ? '✓ Selected' : 'Tap to select'}
                         </div>
                       )}
