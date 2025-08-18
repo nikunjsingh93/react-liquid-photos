@@ -5,6 +5,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import crypto from 'node:crypto'
+import { spawn } from 'node:child_process'
 import fg from 'fast-glob'
 import chokidar from 'chokidar'
 import Database from 'better-sqlite3'
@@ -21,6 +22,7 @@ const CACHE_DIR = path.join(ROOT, '.cache')
 const DB_PATH = path.join(CACHE_DIR, 'index.db')
 const THUMBS_DIR = path.join(CACHE_DIR, 'thumbs')
 const VIEWS_DIR = path.join(CACHE_DIR, 'views')
+const RAW_PREVIEWS_DIR = path.join(CACHE_DIR, 'rawpreviews')
 const THUMB_WIDTH = Number(process.env.THUMB_WIDTH || 512)
 const VIEW_WIDTH = Number(process.env.VIEW_WIDTH || 1920)
 const DB_CACHE_SIZE_MB = Number(process.env.DB_CACHE_SIZE_MB || 256)
@@ -37,6 +39,7 @@ const WATCH_IGNORED = (process.env.WATCH_IGNORED || '')
 fs.mkdirSync(CACHE_DIR, { recursive: true })
 fs.mkdirSync(THUMBS_DIR, { recursive: true })
 fs.mkdirSync(VIEWS_DIR, { recursive: true })
+fs.mkdirSync(RAW_PREVIEWS_DIR, { recursive: true })
 
 /* ---------- helpers ---------- */
 const toPosix = (p) => p.split(path.sep).join('/')
@@ -151,8 +154,63 @@ const updateStmt = db.prepare(`UPDATE images SET ctime=?, mtime=?, size=? WHERE 
 const IMG_EXT = new Set([
   '.jpg','.jpeg','.png','.webp','.avif','.gif',
   '.tif','.tiff','.bmp','.heic','.heif',
-  '.dng','.arw','.cr2','.raf','.nef'
+  // RAW formats (index these so we can extract previews)
+  '.dng','.arw','.cr2','.raf','.nef','.rw2'
 ])
+
+const RAW_EXT = new Set(['.dng','.arw','.cr2','.raf','.nef','.rw2'])
+
+function isRawExt(filePath) {
+  const ext = path.extname(filePath).toLowerCase()
+  return RAW_EXT.has(ext)
+}
+
+async function fileExists(p) {
+  try { await fsp.access(p); return true } catch { return false }
+}
+
+/**
+ * Extract largest available embedded preview from a RAW file using exiftool.
+ * Tries JpgFromRaw, PreviewImage, then ThumbnailImage. Returns absolute path to cached file or null.
+ */
+async function ensureRawEmbeddedPreview(absPath) {
+  const h = hashPath(absPath)
+  const out = path.join(RAW_PREVIEWS_DIR, `${h}.bin`)
+  if (await fileExists(out)) return out
+
+  async function tryExtract(tag) {
+    return new Promise((resolve) => {
+      const args = ['-b', `-${tag}`, absPath]
+      const ex = spawn('exiftool', args, { stdio: ['ignore', 'pipe', 'pipe'] })
+      const ws = fs.createWriteStream(out)
+      let wrote = 0
+      ex.stdout.on('data', (chunk) => { wrote += chunk.length })
+      ex.stdout.pipe(ws)
+      let stderrBuf = ''
+      ex.stderr.on('data', (d) => { stderrBuf += String(d) })
+      ex.on('close', async (code) => {
+        try { ws.close() } catch {}
+        if (code === 0 && wrote > 0) {
+          resolve(true)
+        } else {
+          try { await fsp.unlink(out) } catch {}
+          resolve(false)
+        }
+      })
+      ex.on('error', async () => {
+        try { await fsp.unlink(out) } catch {}
+        resolve(false)
+      })
+    })
+  }
+
+  const tags = ['JpgFromRaw', 'PreviewImage', 'BigImage', 'ThumbnailImage']
+  for (const tag of tags) {
+    const ok = await tryExtract(tag)
+    if (ok) return out
+  }
+  return null
+}
 
 async function scanAndIndex() {
   console.log('[index] scanning…')
@@ -185,7 +243,15 @@ async function ensureThumb(absPath) {
   const out = path.join(THUMBS_DIR, `${h}.webp`)
   try { await fsp.access(out); return out } catch {}
   try {
-    await sharp(absPath).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
+    try {
+      await sharp(absPath).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
+      return out
+    } catch (e) {
+      if (!isRawExt(absPath)) throw e
+      const prev = await ensureRawEmbeddedPreview(absPath)
+      if (!prev) throw e
+      await sharp(prev).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
+    }
     return out
   } catch (e) {
     console.warn('thumb failed', absPath, e.message)
@@ -198,12 +264,49 @@ async function ensureView(absPath) {
   const out = path.join(VIEWS_DIR, `${h}.webp`)
   try { await fsp.access(out); return out } catch {}
   try {
-    await sharp(absPath).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
+    try {
+      await sharp(absPath).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
+      return out
+    } catch (e) {
+      if (!isRawExt(absPath)) throw e
+      const prev = await ensureRawEmbeddedPreview(absPath)
+      if (!prev) throw e
+      await sharp(prev).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
+    }
     return out
   } catch (e) {
     console.warn('view failed', absPath, e.message)
     return null
   }
+}
+
+/**
+ * For browsers that cannot render RAW originals, provide a displayable media.
+ * If RAW: return path to embedded preview (no resize). Else: return original file path.
+ * Returns: { path, contentType }
+ */
+async function ensureDisplayableMedia(absPath) {
+  if (!isRawExt(absPath)) {
+    const type = mime.lookup(absPath) || 'application/octet-stream'
+    return { path: absPath, contentType: type }
+  }
+  const prev = await ensureRawEmbeddedPreview(absPath)
+  if (prev) {
+    let type = 'image/jpeg'
+    try {
+      const md = await sharp(prev).metadata()
+      if (md?.format) {
+        if (md.format === 'tiff') type = 'image/tiff'
+        else if (md.format === 'png') type = 'image/png'
+        else if (md.format === 'webp') type = 'image/webp'
+        else type = 'image/jpeg'
+      }
+    } catch {}
+    return { path: prev, contentType: type }
+  }
+  // Fallback to original (may not render), but at least downloadable
+  const type = mime.lookup(absPath) || 'application/octet-stream'
+  return { path: absPath, contentType: type }
 }
 
 /* ---------- tree (scoped) ---------- */
@@ -568,15 +671,21 @@ app.get('/view/:id', requireAuth, async (req, res) => {
   fs.createReadStream(view).pipe(res)
 })
 
-app.get('/media/:id', requireAuth, (req, res) => {
+app.get('/media/:id', requireAuth, async (req, res) => {
   const id = Number(req.params.id)
   const row = db.prepare('SELECT path, folder FROM images WHERE id=?').get(id)
   if (!row) return res.status(404).end()
   if (!inScope(req.user.root_path || '', row.folder)) return res.status(403).end()
   const abs = path.join(PHOTOS_ROOT, row.path)
-  const type = mime.lookup(abs) || 'application/octet-stream'
-  res.setHeader('content-type', type)
-  fs.createReadStream(abs).pipe(res)
+  try {
+    const disp = await ensureDisplayableMedia(abs)
+    res.setHeader('content-type', disp.contentType)
+    fs.createReadStream(disp.path).pipe(res)
+  } catch (e) {
+    const type = mime.lookup(abs) || 'application/octet-stream'
+    res.setHeader('content-type', type)
+    fs.createReadStream(abs).pipe(res)
+  }
 })
 
 app.get('/download/:id', requireAuth, (req, res) => {
