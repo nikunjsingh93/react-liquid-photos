@@ -38,7 +38,7 @@ const API = {
     })).json(),
 
   /* photos */
-  tree: async (mode = 'folders') => (await fetch(apiUrl(`/api/tree?mode=${encodeURIComponent(mode)}`), { credentials: 'include' })).json(),
+  tree: async (mode = 'folders', filter = 'all') => (await fetch(apiUrl(`/api/tree?mode=${encodeURIComponent(mode)}&filter=${encodeURIComponent(filter)}`), { credentials: 'include' })).json(),
   photos: async (params = {}, options = {}) => {
     const qs = new URLSearchParams(params).toString()
     const r = await fetch(apiUrl(`/api/photos?${qs}`), { credentials: 'include', ...options })
@@ -278,7 +278,7 @@ export default function App() {
         const r = await API.me()
         if (r?.user?.id) {
           setUser(r.user)
-          const t = await API.tree()
+          const t = await API.tree('folders', mediaFilter)
           setTree(t)
           setOpen(new Set([t.path]))
           setSelected(t.path)
@@ -573,7 +573,7 @@ export default function App() {
                    className="ml-auto inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10"
                    onClick={() =>
                      API.rescan().then(() =>
-                       API.tree(treeMode).then(t => { setTree(t); setOpen(new Set([t.path])); setSelected(t.path); setDateRange({ from: 0, to: 0 }) })
+                       API.tree(treeMode, mediaFilter).then(t => { setTree(t); setOpen(new Set([t.path])); setSelected(t.path); setDateRange({ from: 0, to: 0 }) })
                      )
                    }
                    title="Rescan Library"
@@ -614,7 +614,7 @@ export default function App() {
                  onToggleMode={async (nextMode) => {
                    if (nextMode === treeMode) return
                    setTreeMode(nextMode)
-                   const t = await API.tree(nextMode)
+                   const t = await API.tree(nextMode, mediaFilter)
                    setTree(t)
                    setOpen(new Set([t.path]))
                    setSelected(t.path)
@@ -695,7 +695,17 @@ export default function App() {
                   <select
                     className="text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
                     value={mediaFilter}
-                    onChange={(e) => setMediaFilter(e.target.value)}
+                    onChange={async (e) => {
+                      const val = e.target.value
+                      setMediaFilter(val)
+                      // refresh tree counts for current mode using selected filter
+                      try {
+                        const t = await API.tree(treeMode, val)
+                        setTree(t)
+                        // keep current selection if still present; otherwise reset to root
+                        setOpen(new Set([t.path]))
+                      } catch {}
+                    }}
                     title="Filter media type"
                   >
                     <option value="all">Photos and Videos</option>
@@ -919,7 +929,7 @@ export default function App() {
               onToggleMode={async (nextMode) => {
                 if (nextMode === treeMode) return
                 setTreeMode(nextMode)
-                const t = await API.tree(nextMode)
+                const t = await API.tree(nextMode, mediaFilter)
                 setTree(t)
                 setOpen(new Set([t.path]))
                 setSelected(t.path)

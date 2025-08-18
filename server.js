@@ -482,10 +482,11 @@ async function ensureDisplayableMedia(absPath) {
 }
 
 /* ---------- tree (scoped) ---------- */
-function buildTreeForScope(scopePath) {
+function buildTreeForScope(scopePath, filter = 'all') {
   const lower = scopePath
   const upper = scopePath + '\uFFFF'
-  const rows = db.prepare(`SELECT DISTINCT folder FROM images WHERE folder >= ? AND folder < ?`).all(lower, upper)
+  const kindWhere = filter === 'images' ? " AND kind = 'image'" : (filter === 'videos' ? " AND kind = 'video'" : '')
+  const rows = db.prepare(`SELECT DISTINCT folder FROM images WHERE folder >= ? AND folder < ?${kindWhere}`).all(lower, upper)
 
   let rootName = path.basename(PHOTOS_ROOT) || '/'
   if (scopePath) {
@@ -513,7 +514,8 @@ function buildTreeForScope(scopePath) {
     }
   }
 
-  const prefixCount = db.prepare(`SELECT COUNT(*) as c FROM images WHERE folder >= ? AND folder < ?`)
+  const prefixCountSql = `SELECT COUNT(*) as c FROM images WHERE folder >= ? AND folder < ?${kindWhere}`
+  const prefixCount = db.prepare(prefixCountSql)
   const fillCounts = (node, relPath) => {
     const absPrefix = scopePath ? (relPath ? `${scopePath}/${relPath}` : scopePath) : (relPath || '')
     const lowerP = absPrefix
@@ -770,9 +772,10 @@ function ordinal(n) {
   return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`
 }
 
-function buildDateTreeForScope(scopePath) {
+function buildDateTreeForScope(scopePath, filter = 'all') {
   const lower = scopePath || ''
   const upper = lower + '\uFFFF'
+  const kindWhere = filter === 'images' ? " AND kind = 'image'" : (filter === 'videos' ? " AND kind = 'video'" : '')
   const rows = db.prepare(`
     SELECT
       CAST(strftime('%Y', mtime/1000, 'unixepoch') AS INTEGER) AS y,
@@ -780,7 +783,7 @@ function buildDateTreeForScope(scopePath) {
       CAST(strftime('%d', mtime/1000, 'unixepoch') AS INTEGER) AS d,
       COUNT(*) AS c
     FROM images
-    WHERE folder >= ? AND folder < ?
+    WHERE folder >= ? AND folder < ?${kindWhere}
     GROUP BY y, m, d
     ORDER BY y DESC, m DESC, d DESC
   `).all(lower, upper)
@@ -831,10 +834,12 @@ function buildDateTreeForScope(scopePath) {
 app.get('/api/tree', requireAuth, (req, res) => {
   try {
     const mode = String(req.query.mode || 'folders')
+    const filterRaw = String(req.query.filter || 'all')
+    const filter = (filterRaw === 'images' || filterRaw === 'videos') ? filterRaw : 'all'
     if (mode === 'dates') {
-      res.json(buildDateTreeForScope(req.user.root_path || ''))
+      res.json(buildDateTreeForScope(req.user.root_path || '', filter))
     } else {
-      res.json(buildTreeForScope(req.user.root_path || ''))
+      res.json(buildTreeForScope(req.user.root_path || '', filter))
     }
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
