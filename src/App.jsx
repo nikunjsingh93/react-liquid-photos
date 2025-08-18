@@ -173,6 +173,21 @@ function parseZipFilenameFromCD(cd) {
   m = /filename="?([^"]+)"?/i.exec(cd)
   return m ? m[1] : null
 }
+function formatDayHeader(mtime) {
+  if (!mtime && mtime !== 0) return ''
+  const d = new Date(Number(mtime))
+  try {
+    return d.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    })
+  } catch {
+    // Fallback if locale formatting fails
+    return d.toDateString()
+  }
+}
 const HEADER_H = 56
 const MOBILE_INFO_VH = 40
 
@@ -710,35 +725,54 @@ export default function App() {
                   gap: isSmall ? '2px' : '3px'
                 }}
               >
-                {photos.map((p, i) => {
-                  const isSel = selectedIds.has(p.id)
-                  const isRaw = isRawName(p.fname)
-                  return (
-                    <button
-                      key={p.id}
-                      className={`group relative aspect-[4/3] overflow-hidden bg-white/5 ${isSel ? 'ring-2 ring-sky-400/60' : ''} hover:scale-[1.01] transition`}
-                      onClick={() => onTileClick(p.id, i)}
-                    >
-                      <img
-                        src={apiUrl(`/thumb/${p.id}`)}
-                        alt={p.fname}
-                        loading="lazy"
-                        className="h-full w-full object-cover"
-                      />
-                      {isRaw && (
-                        <div className="absolute left-1 top-1 bg-black/60 text-white text-[7px] px-1.5 py-0.5 rounded">
-                          RAW
+                {(() => {
+                  const nodes = []
+                  let lastDateKey = ''
+                  for (let i = 0; i < photos.length; i++) {
+                    const p = photos[i]
+                    const dateKey = new Date(Number(p.mtime)).toDateString()
+                    if (dateKey !== lastDateKey) {
+                      nodes.push(
+                        <div
+                          key={`hdr-${dateKey}-${i}`}
+                          style={{ gridColumn: '1 / -1' }}
+                          className="mt-3 mb-1 px-1 py-1 text-xs sm:text-sm font-medium text-slate-200"
+                        >
+                          {formatDayHeader(p.mtime)}
                         </div>
-                      )}
-                      {selectMode && (
-                        <div className={`absolute left-1 ${isRaw ? 'top-6' : 'top-1'} bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded`}>
-                          {isSel ? '✓ Selected' : 'Tap to select'}
-                        </div>
-                      )}
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition" />
-                    </button>
-                  )
-                })}
+                      )
+                      lastDateKey = dateKey
+                    }
+                    const isSel = selectedIds.has(p.id)
+                    const isRaw = isRawName(p.fname)
+                    nodes.push(
+                      <button
+                        key={p.id}
+                        className={`group relative aspect-[4/3] overflow-hidden bg-white/5 ${isSel ? 'ring-2 ring-sky-400/60' : ''} hover:scale-[1.01] transition`}
+                        onClick={() => onTileClick(p.id, i)}
+                      >
+                        <img
+                          src={apiUrl(`/thumb/${p.id}`)}
+                          alt={p.fname}
+                          loading="lazy"
+                          className="h-full w-full object-cover"
+                        />
+                        {isRaw && (
+                          <div className="absolute left-1 top-1 bg-black/60 text-white text-[7px] px-1.5 py-0.5 rounded">
+                            RAW
+                          </div>
+                        )}
+                        {selectMode && (
+                          <div className={`absolute left-1 ${isRaw ? 'top-6' : 'top-1'} bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded`}>
+                            {isSel ? '✓ Selected' : 'Tap to select'}
+                          </div>
+                        )}
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition" />
+                      </button>
+                    )
+                  }
+                  return nodes
+                })()}
               </div>
 
               <div ref={sentinelRef} className="h-20" />
