@@ -24,6 +24,7 @@ const THUMBS_DIR = path.join(CACHE_DIR, 'thumbs')
 const VIEWS_DIR = path.join(CACHE_DIR, 'views')
 const RAW_PREVIEWS_DIR = path.join(CACHE_DIR, 'rawpreviews')
 const MEDIA_PREVIEWS_DIR = path.join(CACHE_DIR, 'media')
+const HLS_DIR = path.join(CACHE_DIR, 'hls')
 const THUMB_WIDTH = Number(process.env.THUMB_WIDTH || 512)
 const VIEW_WIDTH = Number(process.env.VIEW_WIDTH || 1920)
 const DB_CACHE_SIZE_MB = Number(process.env.DB_CACHE_SIZE_MB || 256)
@@ -42,6 +43,7 @@ fs.mkdirSync(THUMBS_DIR, { recursive: true })
 fs.mkdirSync(VIEWS_DIR, { recursive: true })
 fs.mkdirSync(RAW_PREVIEWS_DIR, { recursive: true })
 fs.mkdirSync(MEDIA_PREVIEWS_DIR, { recursive: true })
+fs.mkdirSync(HLS_DIR, { recursive: true })
 
 /* ---------- helpers ---------- */
 const toPosix = (p) => p.split(path.sep).join('/')
@@ -1101,6 +1103,97 @@ app.get('/transcode/:id', requireAuth, async (req, res) => {
   ex.on('error', () => { try { res.status(500).end() } catch {} })
 })
 
+/* HLS adaptive streaming: master and variants */
+app.get('/hls/:id/master.m3u8', requireAuth, async (req, res) => {
+  const id = Number(req.params.id)
+  const row = db.prepare('SELECT path, folder, kind FROM images WHERE id=?').get(id)
+  if (!row) return res.status(404).end()
+  if (!inScope(req.user.root_path || '', row.folder)) return res.status(403).end()
+  if (row.kind !== 'video') return res.status(400).json({ error: 'not a video' })
+
+  const set = [
+    { name: '360p', height: 360, bw: 700000 },
+    { name: '540p', height: 540, bw: 1200000 },
+    { name: '720p', height: 720, bw: 2500000 }
+  ]
+  const lines = ['#EXTM3U', '#EXT-X-VERSION:3']
+  for (const v of set) {
+    lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${v.bw},RESOLUTION=1280x${v.height}`)
+    lines.push(`/hls/${id}/${v.height}.m3u8`)
+  }
+  res.setHeader('Content-Type', 'application/x-mpegURL')
+  res.send(lines.join('\n'))
+})
+
+app.get('/hls/:id/:height.m3u8', requireAuth, async (req, res) => {
+  const id = Number(req.params.id)
+  const height = Math.max(144, Math.min(2160, parseInt(req.params.height || '720', 10)))
+  const row = db.prepare('SELECT path, folder, kind FROM images WHERE id=?').get(id)
+  if (!row) return res.status(404).end()
+  if (!inScope(req.user.root_path || '', row.folder)) return res.status(403).end()
+  if (row.kind !== 'video') return res.status(400).end()
+  const abs = path.join(PHOTOS_ROOT, row.path)
+
+  const key = `${hashPath(abs)}_${height}`
+  const outDir = path.join(HLS_DIR, key)
+  const indexPath = path.join(outDir, 'index.m3u8')
+  // If already generated, serve playlist
+  if (await fileExists(indexPath)) {
+    res.setHeader('Content-Type', 'application/x-mpegURL')
+    return fs.createReadStream(indexPath).pipe(res)
+  }
+
+  // Prepare directory
+  await fsp.mkdir(outDir, { recursive: true })
+
+  // Bitrate ladder approximation
+  const cfg = height <= 360
+    ? { maxrate: '700k', buf: '1400k', abr: '64k' }
+    : (height <= 540 ? { maxrate: '1200k', buf: '2400k', abr: '96k' } : { maxrate: '2500k', buf: '5000k', abr: '128k' })
+
+  // Segment duration target ~4s
+  const args = [
+    '-hide_banner', '-loglevel', 'error', '-y',
+    '-i', abs,
+    '-vf', `scale=-2:${height}:flags=lanczos`,
+    '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'high', '-level', '4.1', '-crf', '20',
+    '-maxrate', cfg.maxrate, '-bufsize', cfg.buf,
+    '-c:a', 'aac', '-ac', '2', '-b:a', cfg.abr,
+    '-f', 'hls',
+    '-hls_time', '4', '-hls_playlist_type', 'event', '-hls_segment_type', 'mpegts',
+    '-hls_segment_filename', path.join(outDir, 'seg%04d.ts'),
+    path.join(outDir, 'index.m3u8')
+  ]
+
+  // Launch ffmpeg and immediately tail the playlist when it appears
+  const ex = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] })
+  ex.stderr.on('data', () => {})
+  ex.on('error', () => {})
+
+  // Poll for playlist existence, then stream it
+  const start = Date.now()
+  const poll = setInterval(async () => {
+    if (await fileExists(indexPath)) {
+      clearInterval(poll)
+      res.setHeader('Content-Type', 'application/x-mpegURL')
+      fs.createReadStream(indexPath).pipe(res)
+    } else if (Date.now() - start > 8000) {
+      clearInterval(poll)
+      try { ex.kill('SIGKILL') } catch {}
+      res.status(500).end()
+    }
+  }, 200)
+})
+
+// HLS segment serving (ts files)
+app.get('/hls/seg/:key/:file', requireAuth, async (req, res) => {
+  const key = String(req.params.key)
+  const file = String(req.params.file)
+  const segPath = path.join(HLS_DIR, key, file)
+  if (!(await fileExists(segPath))) return res.status(404).end()
+  res.setHeader('Content-Type', 'video/MP2T')
+  fs.createReadStream(segPath).pipe(res)
+})
 app.get('/download/:id', requireAuth, (req, res) => {
   const id = Number(req.params.id)
   const row = db.prepare('SELECT path, fname, folder FROM images WHERE id=?').get(id)
@@ -1259,7 +1352,8 @@ if (fs.existsSync(DIST_DIR)) {
       req.path.startsWith('/api/') ||
       req.path.startsWith('/thumb/') ||
       req.path.startsWith('/media/') ||
-      req.path.startsWith('/download/')
+      req.path.startsWith('/download/') ||
+      req.path.startsWith('/hls/')
     ) return next()
     res.sendFile(path.join(DIST_DIR, 'index.html'))
   })
