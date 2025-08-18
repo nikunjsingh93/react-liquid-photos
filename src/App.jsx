@@ -1209,6 +1209,7 @@ function Viewer({
   const [useFullRes, setUseFullRes] = useState(false)
   const [imageLoading, setImageLoading] = useState(false)
   const isVideo = String(photo?.kind) === 'video'
+  const [reduced, setReduced] = useState(true)
 
   // Reset loading state when photo changes
   useEffect(() => {
@@ -1240,6 +1241,15 @@ function Viewer({
                   {useFullRes ? 'Full' : 'Optimized'}
                 </span>
               </div>
+            )}
+            {isVideo && (
+              <button
+                className={`px-3 py-1 rounded-full border border-white/10 ${reduced ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
+                onClick={() => setReduced(v => !v)}
+                title={reduced ? 'Playing Reduced' : 'Switch to Reduced'}
+              >
+                {reduced ? 'Reduced' : 'Original'}
+              </button>
             )}
             <button
               className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
@@ -1276,10 +1286,16 @@ function Viewer({
 
           {isVideo ? (
             <video
-              src={apiUrl(`/media/${photo.id}`)}
+              src={apiUrl(reduced ? `/transcode/${photo.id}?q=medium` : `/media/${photo.id}`)}
               controls
               autoPlay={false}
-              style={{ maxHeight: imgMaxHeight, maxWidth: isSmall && infoOpen ? '94vw' : '92vw' }}
+              style={{
+                maxHeight: imgMaxHeight,
+                maxWidth: isSmall && infoOpen ? '94vw' : '92vw',
+                width: '100%',
+                height: 'auto',
+                objectFit: 'contain'
+              }}
               onTouchStart={onTouchStart}
               onTouchMove={onTouchMove}
               onTouchEnd={onTouchEnd}

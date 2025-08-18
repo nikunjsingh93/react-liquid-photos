@@ -1043,6 +1043,62 @@ app.get('/media/:id', requireAuth, async (req, res) => {
   }
 })
 
+/* On-the-fly video transcode for reduced buffering */
+app.get('/transcode/:id', requireAuth, async (req, res) => {
+  const id = Number(req.params.id)
+  const row = db.prepare('SELECT path, folder, kind FROM images WHERE id=?').get(id)
+  if (!row) return res.status(404).end()
+  if (!inScope(req.user.root_path || '', row.folder)) return res.status(403).end()
+  if (row.kind !== 'video') return res.status(400).json({ error: 'not a video' })
+  const abs = path.join(PHOTOS_ROOT, row.path)
+
+  // Presets: low/medium/high or custom maxw/bitrate
+  const q = String(req.query.q || 'low')
+  const maxw = Math.max(160, Math.min(3840, parseInt(req.query.maxw || '0', 10) || 0))
+  const brParam = String(req.query.br || '')
+  function pickPreset() {
+    if (maxw || brParam) {
+      const vmax = brParam || '10000k'
+      const vbuf = (/\d+k$/i.test(vmax) ? `${parseInt(vmax,10)*2}k` : '20M')
+      return { height: 720, vcrf: 16, vmax, vbuf, abitrate: '192k' }
+    }
+    if (q === 'high') return { height: 1080, vcrf: 18, vmax: '14000k', vbuf: '28M', abitrate: '192k' }
+    if (q === 'medium' || q === '720') return { height: 720, vcrf: 16, vmax: '10000k', vbuf: '20M', abitrate: '192k' }
+    return { height: 540, vcrf: 20, vmax: '5000k', vbuf: '10M', abitrate: '160k' }
+  }
+  const preset = pickPreset()
+
+  // ffmpeg args for fragmented MP4 for progressive playback
+  const args = [
+    '-hide_banner', '-loglevel', 'error',
+    '-i', abs,
+    // Force target height (e.g. 720p) with sharp downscaling
+    '-vf', `scale=-2:${preset.height}:flags=lanczos`,
+    '-c:v', 'libx264', '-preset', 'medium', '-crf', String(preset.vcrf),
+    '-profile:v', 'high', '-level', '4.1', '-pix_fmt', 'yuv420p',
+    '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',
+    '-maxrate', preset.vmax, '-bufsize', preset.vbuf,
+    '-c:a', 'aac', '-ac', '2', '-b:a', preset.abitrate,
+    '-movflags', 'frag_keyframe+empty_moov+faststart', '-f', 'mp4', 'pipe:1'
+  ]
+
+  res.setHeader('Content-Type', 'video/mp4')
+  // Disable caching for dynamic transcode
+  res.setHeader('Cache-Control', 'no-store')
+  const ex = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] })
+  ex.stdout.pipe(res)
+  ex.stderr.on('data', () => {})
+  const cleanup = () => { try { ex.kill('SIGKILL') } catch {} }
+  res.on('close', cleanup)
+  res.on('finish', cleanup)
+  ex.on('close', (code) => {
+    if (code !== 0) {
+      try { if (!res.headersSent) res.status(500).end() } catch {}
+    }
+  })
+  ex.on('error', () => { try { res.status(500).end() } catch {} })
+})
+
 app.get('/download/:id', requireAuth, (req, res) => {
   const id = Number(req.params.id)
   const row = db.prepare('SELECT path, fname, folder FROM images WHERE id=?').get(id)
