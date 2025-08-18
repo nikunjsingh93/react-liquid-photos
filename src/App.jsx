@@ -1209,7 +1209,7 @@ function Viewer({
   const [useFullRes, setUseFullRes] = useState(false)
   const [imageLoading, setImageLoading] = useState(false)
   const isVideo = String(photo?.kind) === 'video'
-  const [reduced, setReduced] = useState(true)
+  const [quality, setQuality] = useState('reduced') // 'original' | 'reduced' | 'low'
 
   // Reset loading state when photo changes
   useEffect(() => {
@@ -1244,11 +1244,13 @@ function Viewer({
             )}
             {isVideo && (
               <button
-                className={`px-3 py-1 rounded-full border border-white/10 ${reduced ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
-                onClick={() => setReduced(v => !v)}
-                title={reduced ? 'Playing Reduced' : 'Switch to Reduced'}
+                className={`px-3 py-1 rounded-full border border-white/10 ${quality ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
+                onClick={() => setQuality(q => (q === 'original' ? 'reduced' : (q === 'reduced' ? 'low' : 'original')))}
+                title={
+                  quality === 'original' ? 'Tap to switch to Reduced' : (quality === 'reduced' ? 'Tap to switch to Low' : 'Tap to switch to Original')
+                }
               >
-                {reduced ? 'Reduced' : 'Original'}
+                {quality === 'original' ? 'Original' : (quality === 'reduced' ? 'Reduced' : 'Low')}
               </button>
             )}
             <button
@@ -1286,7 +1288,11 @@ function Viewer({
 
           {isVideo ? (
             <video
-              src={apiUrl(reduced ? `/transcode/${photo.id}?q=medium` : `/media/${photo.id}`)}
+              src={apiUrl(
+                quality === 'original'
+                  ? `/media/${photo.id}`
+                  : (quality === 'low' ? `/transcode/${photo.id}?q=low` : `/transcode/${photo.id}?q=720`)
+              )}
               controls
               autoPlay={false}
               style={{
