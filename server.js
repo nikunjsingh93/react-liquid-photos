@@ -683,8 +683,8 @@ function buildDateTreeForScope(scopePath) {
     mNode.count += r.c
 
     const dateForDay = new Date(Date.UTC(r.y, r.m - 1, r.d))
-    const weekday = dateForDay.toLocaleString('en-US', { weekday: 'long', timeZone: 'UTC' })
-    const dName = `${weekday}, ${ordinal(r.d)}`
+    const weekday = dateForDay.toLocaleString('en-US', { weekday: 'short', timeZone: 'UTC' })
+    const dName = `${weekday}, ${r.d}`
     const dPath = `date:D-${r.y}-${String(r.m).padStart(2, '0')}-${String(r.d).padStart(2, '0')}`
     mNode.children.push({ name: dName, path: dPath, count: r.c, children: [] })
   }
