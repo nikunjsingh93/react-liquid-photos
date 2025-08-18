@@ -149,8 +149,21 @@ ensureColumn('sessions', 'expires_at INTEGER NOT NULL DEFAULT 0', 'expires_at')
 ensureColumn('users', 'is_admin INTEGER NOT NULL DEFAULT 0', 'is_admin')
 ensureColumn('users', 'root_path TEXT', 'root_path')
 
+// Extend images with kind (image|video) and duration (ms)
+ensureColumn('images', 'kind TEXT NOT NULL DEFAULT "image"', 'kind')
+ensureColumn('images', 'duration INTEGER NOT NULL DEFAULT 0', 'duration')
+
 /* ---------- indexer ---------- */
-const insertStmt = db.prepare(`INSERT OR IGNORE INTO images(path, fname, folder, ctime, mtime, size) VALUES(?,?,?,?,?,?)`)
+const insertStmt = db.prepare(`INSERT INTO images(path, fname, folder, ctime, mtime, size, kind, duration)
+  VALUES(?,?,?,?,?,?,?,?)
+  ON CONFLICT(path) DO UPDATE SET
+    fname=excluded.fname,
+    folder=excluded.folder,
+    ctime=excluded.ctime,
+    mtime=excluded.mtime,
+    size=excluded.size,
+    kind=excluded.kind,
+    duration=excluded.duration`)
 const updateStmt = db.prepare(`UPDATE images SET ctime=?, mtime=?, size=? WHERE path=?`)
 
 const IMG_EXT = new Set([
@@ -162,6 +175,9 @@ const IMG_EXT = new Set([
 
 const RAW_EXT = new Set(['.dng','.arw','.cr2','.raf','.nef','.rw2'])
 const HEIC_EXT = new Set(['.heic', '.heif'])
+const VIDEO_EXT = new Set([
+  '.mp4', '.m4v', '.mov', '.mkv', '.webm', '.avi', '.wmv', '.flv', '.3gp', '.mts', '.m2ts', '.ts'
+])
 
 function isRawExt(filePath) {
   const ext = path.extname(filePath).toLowerCase()
@@ -171,6 +187,11 @@ function isRawExt(filePath) {
 function isHeicExt(filePath) {
   const ext = path.extname(filePath).toLowerCase()
   return HEIC_EXT.has(ext)
+}
+
+function isVideoExt(filePath) {
+  const ext = path.extname(filePath).toLowerCase()
+  return VIDEO_EXT.has(ext)
 }
 
 async function fileExists(p) {
@@ -260,13 +281,23 @@ async function scanAndIndex() {
   const ops = []
   for (const abs of entries) {
     const ext = path.extname(abs).toLowerCase()
-    if (!IMG_EXT.has(ext)) continue
+    const isImage = IMG_EXT.has(ext)
+    const isVideo = VIDEO_EXT.has(ext)
+    if (!isImage && !isVideo) continue
     try {
       const st = await fsp.stat(abs)
       const r = rel(abs)
       const folder = toPosix(path.dirname(r))
       const fname = path.basename(abs)
-      ops.push(() => insertStmt.run(r, fname, folder, Math.floor(st.ctimeMs), Math.floor(st.mtimeMs), st.size))
+      let durationMs = 0
+      if (isVideo) {
+        try {
+          const meta = await probeVideoMeta(abs)
+          durationMs = Math.floor(Number(meta?.duration || 0))
+        } catch {}
+      }
+      const kind = isVideo ? 'video' : 'image'
+      ops.push(() => insertStmt.run(r, fname, folder, Math.floor(st.ctimeMs), Math.floor(st.mtimeMs), st.size, kind, Math.floor(durationMs)))
       count++
     } catch {}
   }
@@ -279,20 +310,23 @@ async function ensureThumb(absPath) {
   const out = path.join(THUMBS_DIR, `${h}.webp`)
   try { await fsp.access(out); return out } catch {}
   try {
-    try {
-      await sharp(absPath).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
-      return out
-    } catch (e) {
-      if (isRawExt(absPath)) {
-        const prev = await ensureRawEmbeddedPreview(absPath)
-        if (!prev) throw e
-        await sharp(prev).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
-      } else if (isHeicExt(absPath)) {
-        const prev = await ensureHeicDecodedPreview(absPath)
-        if (!prev) throw e
-        await sharp(prev).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
-      } else {
-        throw e
+    if (isVideoExt(absPath)) {
+      await ensureVideoThumb(absPath, out)
+    } else {
+      try {
+        await sharp(absPath).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
+      } catch (e) {
+        if (isRawExt(absPath)) {
+          const prev = await ensureRawEmbeddedPreview(absPath)
+          if (!prev) throw e
+          await sharp(prev).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
+        } else if (isHeicExt(absPath)) {
+          const prev = await ensureHeicDecodedPreview(absPath)
+          if (!prev) throw e
+          await sharp(prev).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
+        } else {
+          throw e
+        }
       }
     }
     return out
@@ -307,26 +341,104 @@ async function ensureView(absPath) {
   const out = path.join(VIEWS_DIR, `${h}.webp`)
   try { await fsp.access(out); return out } catch {}
   try {
-    try {
-      await sharp(absPath).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
-      return out
-    } catch (e) {
-      if (isRawExt(absPath)) {
-        const prev = await ensureRawEmbeddedPreview(absPath)
-        if (!prev) throw e
-        await sharp(prev).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
-      } else if (isHeicExt(absPath)) {
-        const prev = await ensureHeicDecodedPreview(absPath)
-        if (!prev) throw e
-        await sharp(prev).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
-      } else {
-        throw e
+    if (isVideoExt(absPath)) {
+      // For videos, we do not generate a view image; the frontend will stream the video
+      // Still, generate and return a large thumbnail as a fallback poster
+      const thumb = await ensureThumb(absPath)
+      if (!thumb) throw new Error('view for video failed')
+      return thumb
+    } else {
+      try {
+        await sharp(absPath).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
+      } catch (e) {
+        if (isRawExt(absPath)) {
+          const prev = await ensureRawEmbeddedPreview(absPath)
+          if (!prev) throw e
+          await sharp(prev).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
+        } else if (isHeicExt(absPath)) {
+          const prev = await ensureHeicDecodedPreview(absPath)
+          if (!prev) throw e
+          await sharp(prev).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
+        } else {
+          throw e
+        }
       }
+      return out
     }
-    return out
   } catch (e) {
     console.warn('view failed', absPath, e.message)
     return null
+  }
+}
+
+// removed probeVideoDuration in favor of probeVideoMeta
+
+/**
+ * Generate a thumbnail image for a video using ffmpeg.
+ */
+async function ensureVideoThumb(absPath, outWebp) {
+  const h = hashPath(absPath)
+  const tmpJpg = path.join(THUMBS_DIR, `${h}.jpg.tmp`)
+  async function run(args) {
+    return new Promise((resolve) => {
+      let stderrBuf = ''
+      const ex = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] })
+      ex.stderr.on('data', d => { stderrBuf += String(d) })
+      ex.on('close', async (code) => {
+        resolve({ ok: code === 0, stderr: stderrBuf })
+      })
+      ex.on('error', () => resolve({ ok: false, stderr: 'spawn error' }))
+    })
+  }
+  // Variant A: input seek, thumbnail filter
+  const argsA = [
+    '-hide_banner', '-loglevel', 'error',
+    '-ss', '1', '-i', absPath,
+    '-frames:v', '1',
+    '-vf', `thumbnail,scale=${THUMB_WIDTH}:-2:flags=lanczos`,
+    '-q:v', '2', '-y', tmpJpg
+  ]
+  let r = await run(argsA)
+  if (!(await fileExists(tmpJpg))) {
+    // Variant B: input seek, no thumbnail filter
+    const argsB = [
+      '-hide_banner', '-loglevel', 'error',
+      '-ss', '1', '-i', absPath,
+      '-vframes', '1',
+      '-vf', `scale=${THUMB_WIDTH}:-2:flags=lanczos`,
+      '-q:v', '2', '-y', tmpJpg
+    ]
+    r = await run(argsB)
+  }
+  if (!(await fileExists(tmpJpg))) {
+    // Variant C: output seek (can be more accurate for some containers)
+    const argsC = [
+      '-hide_banner', '-loglevel', 'error',
+      '-i', absPath, '-ss', '00:00:01.000',
+      '-vframes', '1',
+      '-vf', `scale=${THUMB_WIDTH}:-2:flags=lanczos`,
+      '-q:v', '2', '-y', tmpJpg
+    ]
+    r = await run(argsC)
+  }
+  if (!(await fileExists(tmpJpg))) {
+    // Variant D: write webp directly
+    const argsD = [
+      '-hide_banner', '-loglevel', 'error',
+      '-ss', '1', '-i', absPath,
+      '-vframes', '1',
+      '-vf', `scale=${THUMB_WIDTH}:-2:flags=lanczos`,
+      '-y', outWebp
+    ]
+    const d = await run(argsD)
+    if (await fileExists(outWebp)) return
+    console.warn('ffmpeg thumbnail stderr:', d.stderr?.slice(0, 500))
+    throw new Error('ffmpeg failed to create thumbnail')
+  }
+  try {
+    await sharp(tmpJpg).webp({ quality: 82 }).toFile(outWebp)
+  } finally {
+    try { await fsp.unlink(tmpJpg) } catch {}
   }
 }
 
@@ -433,14 +545,31 @@ if (WATCH_ENABLED) {
 
   watcher
     .on('add', async (abs) => {
-      const ext = path.extname(abs).toLowerCase(); if (!IMG_EXT.has(ext)) return
+      const ext = path.extname(abs).toLowerCase(); if (!IMG_EXT.has(ext) && !VIDEO_EXT.has(ext)) return
       const st = await fsp.stat(abs).catch(() => null); if (!st) return
       const r = rel(abs); const folder = toPosix(path.dirname(r)); const fname = path.basename(abs)
-      insertStmt.run(r, fname, folder, Math.floor(st.ctimeMs), Math.floor(st.mtimeMs), st.size)
+      let durationMs = 0
+      if (VIDEO_EXT.has(ext)) {
+        try {
+          const meta = await probeVideoMeta(abs)
+          durationMs = Math.floor(Number(meta?.duration || 0))
+        } catch {}
+      }
+      const kind = VIDEO_EXT.has(ext) ? 'video' : 'image'
+      insertStmt.run(r, fname, folder, Math.floor(st.ctimeMs), Math.floor(st.mtimeMs), st.size, kind, Math.floor(durationMs))
     })
     .on('change', async (abs) => {
       const st = await fsp.stat(abs).catch(() => null); if (!st) return
-      updateStmt.run(Math.floor(st.ctimeMs), Math.floor(st.mtimeMs), st.size, rel(abs))
+      const r = rel(abs); const ext = path.extname(abs).toLowerCase()
+      let kind = 'image'; let durationMs = 0
+      if (VIDEO_EXT.has(ext)) {
+        kind = 'video'
+        try { const meta = await probeVideoMeta(abs); durationMs = Math.floor(Number(meta?.duration || 0)) } catch {}
+      }
+      // Update times/size always; update kind/duration when available
+      try { db.prepare('UPDATE images SET ctime=?, mtime=?, size=?, kind=?, duration=? WHERE path=?')
+        .run(Math.floor(st.ctimeMs), Math.floor(st.mtimeMs), st.size, kind, durationMs, r) }
+      catch { updateStmt.run(Math.floor(st.ctimeMs), Math.floor(st.mtimeMs), st.size, r) }
     })
     .on('unlink', (abs) => {
       db.prepare('DELETE FROM images WHERE path=?').run(rel(abs))
@@ -718,6 +847,7 @@ app.get('/api/photos', requireAuth, (req, res) => {
   const page = Math.max(1, parseInt(req.query.page || '1', 10))
   const pageSize = Math.max(1, Math.min(500, parseInt(req.query.pageSize || '200', 10)))
   const offset = (page - 1) * pageSize
+  const filter = (req.query.filter || 'all').toString() // all | images | videos
 
   const lower = folder
   const upper = folder + '\uFFFF'
@@ -730,18 +860,21 @@ app.get('/api/photos', requireAuth, (req, res) => {
   try {
     let rows = []
     let total = 0
+    let kindWhere = ''
+    if (filter === 'images') kindWhere = " AND i.kind = 'image'"
+    else if (filter === 'videos') kindWhere = " AND i.kind = 'video'"
 
     if (q) {
       const term = q.replace(/\s+/g, ' ')
       if (useDateRange) {
         rows = db.prepare(`
-          SELECT i.id, i.fname, i.folder, i.mtime, i.size
+          SELECT i.id, i.fname, i.folder, i.mtime, i.size, i.kind, i.duration
           FROM images i
           JOIN images_fts f ON f.rowid = i.id
           WHERE f MATCH ?
             AND i.folder >= ?
             AND i.folder < ?
-            AND i.mtime >= ? AND i.mtime < ?
+            AND i.mtime >= ? AND i.mtime < ?${kindWhere}
           ORDER BY i.mtime DESC, i.id DESC
           LIMIT ? OFFSET ?
         `).all(term, userScope, userScope + '\uFFFF', fromMs, toMs, pageSize, offset)
@@ -753,16 +886,16 @@ app.get('/api/photos', requireAuth, (req, res) => {
           WHERE f MATCH ?
             AND i.folder >= ?
             AND i.folder < ?
-            AND i.mtime >= ? AND i.mtime < ?
+            AND i.mtime >= ? AND i.mtime < ?${kindWhere}
         `).get(term, userScope, userScope + '\uFFFF', fromMs, toMs).c
       } else {
         rows = db.prepare(`
-        SELECT i.id, i.fname, i.folder, i.mtime, i.size
+        SELECT i.id, i.fname, i.folder, i.mtime, i.size, i.kind, i.duration
         FROM images i
         JOIN images_fts f ON f.rowid = i.id
         WHERE f MATCH ?
           AND i.folder >= ?
-          AND i.folder < ?
+          AND i.folder < ?${kindWhere}
         ORDER BY i.mtime DESC, i.id DESC
         LIMIT ? OFFSET ?
         `).all(term, lower, upper, pageSize, offset)
@@ -773,43 +906,43 @@ app.get('/api/photos', requireAuth, (req, res) => {
         JOIN images_fts f ON f.rowid = i.id
         WHERE f MATCH ?
           AND i.folder >= ?
-          AND i.folder < ?
+          AND i.folder < ?${kindWhere}
         `).get(term, lower, upper).c
       }
     } else {
       if (useDateRange) {
         rows = db.prepare(`
-          SELECT id, fname, folder, mtime, size
-          FROM images
-          WHERE folder >= ?
-            AND folder < ?
-            AND mtime >= ? AND mtime < ?
-          ORDER BY mtime DESC, id DESC
+          SELECT i.id, i.fname, i.folder, i.mtime, i.size, i.kind, i.duration
+          FROM images i
+          WHERE i.folder >= ?
+            AND i.folder < ?
+            AND i.mtime >= ? AND i.mtime < ?${kindWhere}
+          ORDER BY i.mtime DESC, i.id DESC
           LIMIT ? OFFSET ?
         `).all(userScope, userScope + '\uFFFF', fromMs, toMs, pageSize, offset)
 
         total = db.prepare(`
           SELECT COUNT(*) AS c
-          FROM images
-          WHERE folder >= ?
-            AND folder < ?
-            AND mtime >= ? AND mtime < ?
+          FROM images i
+          WHERE i.folder >= ?
+            AND i.folder < ?
+            AND i.mtime >= ? AND i.mtime < ?${kindWhere}
         `).get(userScope, userScope + '\uFFFF', fromMs, toMs).c
       } else {
         rows = db.prepare(`
-        SELECT id, fname, folder, mtime, size
-        FROM images
-        WHERE folder >= ?
-          AND folder < ?
-        ORDER BY mtime DESC, id DESC
+        SELECT i.id, i.fname, i.folder, i.mtime, i.size, i.kind, i.duration
+        FROM images i
+        WHERE i.folder >= ?
+          AND i.folder < ?${kindWhere}
+        ORDER BY i.mtime DESC, i.id DESC
         LIMIT ? OFFSET ?
         `).all(lower, upper, pageSize, offset)
 
         total = db.prepare(`
         SELECT COUNT(*) AS c
-        FROM images
-        WHERE folder >= ?
-          AND folder < ?
+        FROM images i
+        WHERE i.folder >= ?
+          AND i.folder < ?${kindWhere}
         `).get(lower, upper).c
       }
     }
@@ -841,26 +974,63 @@ app.get('/thumb/:id', requireAuth, async (req, res) => {
 
 app.get('/view/:id', requireAuth, async (req, res) => {
   const id = Number(req.params.id)
-  const row = db.prepare('SELECT path, folder FROM images WHERE id=?').get(id)
+  const row = db.prepare('SELECT path, folder, kind FROM images WHERE id=?').get(id)
   if (!row) return res.status(404).end()
   if (!inScope(req.user.root_path || '', row.folder)) return res.status(403).end()
   const abs = path.join(PHOTOS_ROOT, row.path)
-  const view = await ensureView(abs)
-  if (!view) return res.status(500).end()
-  res.setHeader('content-type', 'image/webp')
-  fs.createReadStream(view).pipe(res)
+  if (row.kind === 'video') {
+    // For videos, return poster image (thumb) as a view placeholder
+    const thumb = await ensureThumb(abs)
+    if (!thumb) return res.status(500).end()
+    res.setHeader('content-type', 'image/webp')
+    fs.createReadStream(thumb).pipe(res)
+  } else {
+    const view = await ensureView(abs)
+    if (!view) return res.status(500).end()
+    res.setHeader('content-type', 'image/webp')
+    fs.createReadStream(view).pipe(res)
+  }
 })
 
 app.get('/media/:id', requireAuth, async (req, res) => {
   const id = Number(req.params.id)
-  const row = db.prepare('SELECT path, folder FROM images WHERE id=?').get(id)
+  const row = db.prepare('SELECT path, folder, kind FROM images WHERE id=?').get(id)
   if (!row) return res.status(404).end()
   if (!inScope(req.user.root_path || '', row.folder)) return res.status(403).end()
   const abs = path.join(PHOTOS_ROOT, row.path)
   try {
-    const disp = await ensureDisplayableMedia(abs)
-    res.setHeader('content-type', disp.contentType)
-    fs.createReadStream(disp.path).pipe(res)
+    if (row.kind === 'video') {
+      // Support Range requests for video streaming
+      const stat = await fsp.stat(abs).catch(() => null)
+      if (!stat) return res.status(404).end()
+      const range = req.headers.range
+      const contentType = mime.lookup(abs) || 'video/mp4'
+      if (!range) {
+        res.writeHead(200, {
+          'Content-Length': stat.size,
+          'Content-Type': contentType,
+          'Accept-Ranges': 'bytes'
+        })
+        return fs.createReadStream(abs).pipe(res)
+      }
+      const m = /bytes=(\d+)-(\d+)?/.exec(range)
+      if (!m) return res.status(416).end()
+      const start = parseInt(m[1], 10)
+      const end = m[2] ? parseInt(m[2], 10) : (stat.size - 1)
+      if (start >= stat.size || end >= stat.size) return res.status(416).end()
+      const chunkSize = (end - start) + 1
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': contentType
+      })
+      return fs.createReadStream(abs, { start, end }).pipe(res)
+    } else {
+      const disp = await ensureDisplayableMedia(abs)
+      res.setHeader('content-type', disp.contentType)
+      fs.createReadStream(disp.path).pipe(res)
+    }
   } catch (e) {
     const type = mime.lookup(abs) || 'application/octet-stream'
     res.setHeader('content-type', type)
@@ -880,6 +1050,85 @@ app.get('/download/:id', requireAuth, (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`)
   fs.createReadStream(abs).pipe(res)
 })
+
+/* metadata: image or video */
+app.get('/api/meta/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id)
+    const row = db.prepare('SELECT id, path, fname, folder, size, kind, duration FROM images WHERE id = ?').get(id)
+    if (!row) return res.status(404).json({ error: 'not found' })
+    if (!inScope(req.user.root_path || '', row.folder)) return res.status(403).json({ error: 'forbidden' })
+    const abs = path.join(PHOTOS_ROOT, row.path)
+    const base = { id: row.id, fname: row.fname, folder: row.folder, size: row.size, kind: row.kind, duration: row.duration }
+    if (row.kind === 'video') {
+      // Basic metadata via ffprobe
+      const meta = await probeVideoMeta(abs)
+      return res.json({ ...base, format: meta?.format || 'video', width: meta?.width || 0, height: meta?.height || 0 })
+    } else {
+      try {
+        const md = await sharp(abs).metadata()
+        return res.json({ ...base, format: md?.format || '', width: md?.width || 0, height: md?.height || 0, exif: {} })
+      } catch {
+        return res.json({ ...base })
+      }
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+async function probeVideoMeta(absPath) {
+  return new Promise((resolve) => {
+    const args = [
+      '-v', 'error',
+      '-show_entries', 'stream=codec_type,width,height,nb_frames,avg_frame_rate,duration:format=duration',
+      '-of', 'json',
+      absPath
+    ]
+    const ex = spawn('ffprobe', args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    let out = ''
+    ex.stdout.on('data', d => { out += String(d) })
+    ex.on('close', () => {
+      try {
+        const j = JSON.parse(out || '{}')
+        const streams = Array.isArray(j.streams) ? j.streams : []
+        const vstream = streams.find(s => (s.codec_type || '') === 'video') || streams[0] || {}
+        const fmt = j.format || {}
+        let durationSec = 0
+        if (fmt.duration != null) {
+          const d = Number(fmt.duration)
+          if (Number.isFinite(d) && d > 0) durationSec = d
+        }
+        if (durationSec === 0) {
+          const sd = Number(vstream.duration)
+          if (Number.isFinite(sd) && sd > 0) durationSec = sd
+        }
+        if (durationSec === 0 && vstream?.tags?.DURATION) {
+          const sex = String(vstream.tags.DURATION)
+          const m = /(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)/.exec(sex)
+          if (m) {
+            const hh = Number(m[1] || 0), mm = Number(m[2] || 0), ss = Number(m[3] || 0)
+            durationSec = hh * 3600 + mm * 60 + ss
+          }
+        }
+        if (durationSec === 0 && vstream.nb_frames && vstream.avg_frame_rate) {
+          const [num, den] = String(vstream.avg_frame_rate).split('/').map(x => Number(x))
+          if (num > 0 && den > 0) {
+            const fps = num / den
+            const nf = Number(vstream.nb_frames)
+            if (fps > 0 && nf > 0) durationSec = nf / fps
+          }
+        }
+        const width = Number(vstream.width || 0)
+        const height = Number(vstream.height || 0)
+        resolve({ width, height, format: 'video', duration: Math.floor(durationSec * 1000) })
+      } catch {
+        resolve(null)
+      }
+    })
+    ex.on('error', () => resolve(null))
+  })
+}
 
 /* Batch ZIP download (scoped) */
 app.post('/download/batch', requireAuth, async (req, res) => {

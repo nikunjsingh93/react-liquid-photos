@@ -20,9 +20,9 @@ FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
-# Runtime tools: exiftool for RAW embedded previews
+# Runtime tools: exiftool for RAW previews, libheif-examples for HEIC, ffmpeg/ffprobe for videos
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  exiftool libheif-examples \
+  exiftool libheif-examples ffmpeg \
   && rm -rf /var/lib/apt/lists/*
 
 # Only prod deps

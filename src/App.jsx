@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import {
   FolderTree, RefreshCcw, Image as ImageIcon, ChevronRight, ChevronDown, X,
-  Maximize2, Download, Menu, Plus, Minus, Info, CheckSquare, LogOut, Shield, Trash2
+  Maximize2, Download, Menu, Plus, Minus, Info, CheckSquare, LogOut, Shield, Trash2, Play
 } from 'lucide-react'
 
 /* Same-origin base (Vite proxy handles /api, /thumb, /view, /media, /download) */
@@ -185,6 +185,12 @@ function parseZipFilenameFromCD(cd) {
   m = /filename="?([^"]+)"?/i.exec(cd)
   return m ? m[1] : null
 }
+function formatDuration(ms) {
+  const total = Math.max(0, Math.round(Number(ms || 0) / 1000))
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${m}.${String(s).padStart(2, '0')}`
+}
 function formatDayHeader(mtime) {
   if (!mtime && mtime !== 0) return ''
   const d = new Date(Number(mtime))
@@ -237,6 +243,8 @@ export default function App() {
   const [total, setTotal] = useState(0)
   const [error, setError] = useState('')
   const [initialLoaded, setInitialLoaded] = useState(false)
+  // filter for media type
+  const [mediaFilter, setMediaFilter] = useState('all')
 
   // Viewer & meta
   const [viewer, setViewer] = useState({ open: false, index: 0 })
@@ -258,7 +266,7 @@ export default function App() {
 
   // loader control
   const photoIdsRef = useRef(new Set())
-  const requestKey = useMemo(() => `${user?.id || 0}::${selected}::${treeMode}::${dateRange.from}-${dateRange.to}`,[user?.id, selected, treeMode, dateRange.from, dateRange.to])
+  const requestKey = useMemo(() => `${user?.id || 0}::${selected}::${treeMode}::${dateRange.from}-${dateRange.to}::${mediaFilter}`,[user?.id, selected, treeMode, dateRange.from, dateRange.to, mediaFilter])
   const lastKeyRef = useRef(null)
   const controllerRef = useRef(null)
   const inFlightRef = useRef(false)
@@ -338,7 +346,7 @@ export default function App() {
       try {
         const params = (treeMode === 'dates' && String(selected).startsWith('date:'))
           ? (() => {
-              const p = { q: '', page, pageSize: 200, _t: Date.now() }
+              const p = { q: '', page, pageSize: 200, _t: Date.now(), filter: mediaFilter }
               if (dateRange.from && dateRange.to) {
                 p.from = dateRange.from; p.to = dateRange.to
               } else {
@@ -346,7 +354,7 @@ export default function App() {
               }
               return p
             })()
-          : { folder: selected, q: '', page, pageSize: 200, _t: Date.now() }
+          : { folder: selected, q: '', page, pageSize: 200, _t: Date.now(), filter: mediaFilter }
         const r = await API.photos(params, { signal: controller.signal })
         if (r?.error) throw new Error(r.error)
         setTotal(Number(r.total || 0))
@@ -682,6 +690,20 @@ export default function App() {
                   <span className="text-xs hidden sm:block">Select</span>
                 </button>
 
+                {/* Filter: Photos/Videos */}
+                <div>
+                  <select
+                    className="text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                    value={mediaFilter}
+                    onChange={(e) => setMediaFilter(e.target.value)}
+                    title="Filter media type"
+                  >
+                    <option value="all">Photos and Videos</option>
+                    <option value="images">Photos</option>
+                    <option value="videos">Videos</option>
+                  </select>
+                </div>
+
                 {/* Admin button */}
                 {user?.is_admin && (
                   <button
@@ -729,7 +751,7 @@ export default function App() {
                   </div>
 
                   <div className="text-xs text-slate-300 shrink-0 px-2 py-1 rounded bg-white/5 border border-white/10">
-                    {total.toLocaleString()} photos
+                    {total.toLocaleString()} items
                   </div>
                 </div>
               </div>
@@ -798,6 +820,7 @@ export default function App() {
                     }
                     const isSel = selectedIds.has(p.id)
                     const isRaw = isRawName(p.fname)
+                    const isVideo = String(p.kind) === 'video'
                     nodes.push(
                       <button
                         key={p.id}
@@ -815,8 +838,13 @@ export default function App() {
                             RAW
                           </div>
                         )}
+                        {isVideo && (
+                          <div className="absolute left-1 top-1 bg-black/60 text-white px-1.5 py-0.5 rounded">
+                            <Play className="w-3 h-3" />
+                          </div>
+                        )}
                         {selectMode && (
-                          <div className={`absolute left-1 ${isRaw ? 'top-6' : 'top-1'} bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded`}>
+                          <div className={`absolute left-1 ${(isRaw || isVideo) ? 'top-6' : 'top-1'} bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded`}>
                             {isSel ? '✓ Selected' : 'Tap to select'}
                           </div>
                         )}
@@ -1173,6 +1201,7 @@ function Viewer({
 }) {
   const [useFullRes, setUseFullRes] = useState(false)
   const [imageLoading, setImageLoading] = useState(false)
+  const isVideo = String(photo?.kind) === 'video'
 
   // Reset loading state when photo changes
   useEffect(() => {
@@ -1188,21 +1217,23 @@ function Viewer({
             </div>
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <div className="flex items-center gap-1">
-              <button
-                className={`p-2 rounded-full border border-white/10 hover:bg-white/20 ${useFullRes ? 'bg-white/20' : 'bg-white/10'}`}
-                onClick={() => {
-                  setUseFullRes(!useFullRes)
-                  setImageLoading(true)
-                }}
-                title={useFullRes ? 'Switch to optimized view' : 'Switch to full resolution'}
-              >
-                <Maximize2 className="w-6 h-6 text-white" />
-              </button>
-              <span className="text-xs text-white/70 px-2 py-1 rounded bg-black/30">
-                {useFullRes ? 'Full' : 'Optimized'}
-              </span>
-            </div>
+            {!isVideo && (
+              <div className="flex items-center gap-1">
+                <button
+                  className={`p-2 rounded-full border border-white/10 hover:bg-white/20 ${useFullRes ? 'bg-white/20' : 'bg-white/10'}`}
+                  onClick={() => {
+                    setUseFullRes(!useFullRes)
+                    setImageLoading(true)
+                  }}
+                  title={useFullRes ? 'Switch to optimized view' : 'Switch to full resolution'}
+                >
+                  <Maximize2 className="w-6 h-6 text-white" />
+                </button>
+                <span className="text-xs text-white/70 px-2 py-1 rounded bg-black/30">
+                  {useFullRes ? 'Full' : 'Optimized'}
+                </span>
+              </div>
+            )}
             <button
               className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
               onClick={async () => { setInfoOpen(v => !v); if (!infoOpen) await ensureMeta(photo.id) }}
@@ -1236,16 +1267,29 @@ function Viewer({
             </div>
           )}
 
-          <img
-            src={apiUrl(useFullRes ? `/media/${photo.id}` : `/view/${photo.id}`)}
-            alt={photo.fname}
-            style={{ maxHeight: imgMaxHeight, maxWidth: isSmall && infoOpen ? '94vw' : '92vw' }}
-            onTouchStart={onTouchStart}
-            onTouchMove={onTouchMove}
-            onTouchEnd={onTouchEnd}
-            onLoad={() => setImageLoading(false)}
-            onError={() => setImageLoading(false)}
-          />
+          {isVideo ? (
+            <video
+              src={apiUrl(`/media/${photo.id}`)}
+              controls
+              autoPlay={false}
+              style={{ maxHeight: imgMaxHeight, maxWidth: isSmall && infoOpen ? '94vw' : '92vw' }}
+              onTouchStart={onTouchStart}
+              onTouchMove={onTouchMove}
+              onTouchEnd={onTouchEnd}
+              poster={apiUrl(`/view/${photo.id}`)}
+            />
+          ) : (
+            <img
+              src={apiUrl(useFullRes ? `/media/${photo.id}` : `/view/${photo.id}`)}
+              alt={photo.fname}
+              style={{ maxHeight: imgMaxHeight, maxWidth: isSmall && infoOpen ? '94vw' : '92vw' }}
+              onTouchStart={onTouchStart}
+              onTouchMove={onTouchMove}
+              onTouchEnd={onTouchEnd}
+              onLoad={() => setImageLoading(false)}
+              onError={() => setImageLoading(false)}
+            />
+          )}
 
           <button className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={onNext}>▶</button>
         </div>
