@@ -726,7 +726,7 @@ export default function App() {
                         className="h-full w-full object-cover"
                       />
                       {isRaw && (
-                        <div className="absolute left-1 top-1 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded">
+                        <div className="absolute left-1 top-1 bg-black/60 text-white text-[7px] px-1.5 py-0.5 rounded">
                           RAW
                         </div>
                       )}
