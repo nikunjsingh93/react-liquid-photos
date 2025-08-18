@@ -387,24 +387,16 @@ export default function App() {
   }, [viewer.open, photos.length])
 
   // download single
-  const downloadActive = useCallback(async () => {
+  const downloadActive = useCallback(() => {
     const current = photos[viewer.index]
     if (!current) return
-    try {
-      const res = await fetch(apiUrl(`/media/${current.id}`), { credentials: 'include' })
-      if (!res.ok) throw new Error(`Download failed: ${res.status}`)
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = current.fname
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      URL.revokeObjectURL(url)
-    } catch (e) {
-      console.error('download failed', e)
-    }
+    // Use original file endpoint to ensure full-size downloads (works with cookies via same-origin navigation)
+    const a = document.createElement('a')
+    a.href = apiUrl(`/download/${current.id}`)
+    a.download = current.fname
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
   }, [photos, viewer.index])
 
   // touch swipe
