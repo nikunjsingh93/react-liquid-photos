@@ -1063,7 +1063,7 @@ app.get('/transcode/:id', requireAuth, async (req, res) => {
       return { height: 720, vcrf: 16, vmax, vbuf, abitrate: '192k' }
     }
     if (q === 'high') return { height: 1080, vcrf: 18, vmax: '14000k', vbuf: '28M', abitrate: '192k' }
-    if (q === 'medium' || q === '720') return { height: 720, vcrf: 18, vmax: '5000k', vbuf: '10M', abitrate: '160k' }
+    if (q === 'medium' || q === '720') return { height: 720, vcrf: 21, vmax: '2000k', vbuf: '4M', abitrate: '96k' }
     return { height: 540, vcrf: 20, vmax: '5000k', vbuf: '10M', abitrate: '160k' }
   }
   const preset = pickPreset()
