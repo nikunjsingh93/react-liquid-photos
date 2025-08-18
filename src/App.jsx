@@ -971,14 +971,14 @@ export default function App() {
 function prevLen(arr) { return Array.isArray(arr) ? arr.length : 0 }
 
 /* ----- HLS-capable Video Player ----- */
-function VideoPlayer({ srcOriginal, srcHls, srcReduced, srcLow, mode, style, onTouchStart, onTouchMove, onTouchEnd, poster }) {
+function VideoPlayer({ srcOriginal, srcHls, srcReduced, mode, style, onTouchStart, onTouchMove, onTouchEnd, poster }) {
   const videoRef = useRef(null)
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
     let hls
-    const wantsHls = (mode === 'original') ? false : true
-    const source = mode === 'low' ? srcLow : (mode === 'reduced' ? srcReduced : srcOriginal)
+    const wantsHls = (mode !== 'original')
+    const source = (mode === 'reduced') ? srcReduced : srcOriginal
 
     // Use HLS for adaptive only when in reduced/low and when Hls.js is supported & source is HLS
     const useHls = wantsHls && Hls.isSupported() && srcHls
@@ -995,7 +995,7 @@ function VideoPlayer({ srcOriginal, srcHls, srcReduced, srcLow, mode, style, onT
     return () => {
       try { if (hls) hls.destroy() } catch {}
     }
-  }, [mode, srcOriginal, srcHls, srcReduced, srcLow])
+  }, [mode, srcOriginal, srcHls, srcReduced])
 
   return (
     <video
@@ -1251,7 +1251,7 @@ function Viewer({
   const [useFullRes, setUseFullRes] = useState(false)
   const [imageLoading, setImageLoading] = useState(false)
   const isVideo = String(photo?.kind) === 'video'
-  const [quality, setQuality] = useState('reduced') // 'original' | 'reduced' | 'low'
+  const [quality, setQuality] = useState('reduced') // 'original' | 'reduced'
 
   // Reset loading state when photo changes
   useEffect(() => {
@@ -1287,12 +1287,10 @@ function Viewer({
             {isVideo && (
               <button
                 className={`px-3 py-1 rounded-full border border-white/10 ${quality ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
-                onClick={() => setQuality(q => (q === 'original' ? 'reduced' : (q === 'reduced' ? 'low' : 'original')))}
-                title={
-                  quality === 'original' ? 'Tap to switch to Reduced' : (quality === 'reduced' ? 'Tap to switch to Low' : 'Tap to switch to Original')
-                }
+                onClick={() => setQuality(q => (q === 'original' ? 'reduced' : 'original'))}
+                title={quality === 'original' ? 'Tap to switch to Reduced' : 'Tap to switch to Original'}
               >
-                {quality === 'original' ? 'Original' : (quality === 'reduced' ? 'Reduced' : 'Low')}
+                {quality === 'original' ? 'Original' : 'Reduced'}
               </button>
             )}
             <button
@@ -1333,7 +1331,6 @@ function Viewer({
               srcOriginal={apiUrl(`/media/${photo.id}`)}
               srcHls={apiUrl(`/hls/${photo.id}/master.m3u8`)}
               srcReduced={apiUrl(`/transcode/${photo.id}?q=720`)}
-              srcLow={apiUrl(`/transcode/${photo.id}?q=low`)}
               mode={quality}
               style={{
                 maxHeight: imgMaxHeight,
