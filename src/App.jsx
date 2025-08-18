@@ -263,6 +263,7 @@ export default function App() {
   const [resizeOpen, setResizeOpen] = useState(false)
   const resizeRef = useRef(null)
   const [resizing, setResizing] = useState(false)
+  const [scanning, setScanning] = useState(false)
 
   // loader control
   const photoIdsRef = useRef(new Set())
@@ -570,15 +571,21 @@ export default function App() {
                  <ImageIcon className="w-5 h-5 text-slate-200" />
                  <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
                  <button
-                   className="ml-auto inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10"
-                   onClick={() =>
-                     API.rescan().then(() =>
-                       API.tree(treeMode, mediaFilter).then(t => { setTree(t); setOpen(new Set([t.path])); setSelected(t.path); setDateRange({ from: 0, to: 0 }) })
-                     )
-                   }
+                   className={`ml-auto inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg border border-white/10 ${scanning ? 'bg-white/20' : 'bg-white/10 hover:bg-white/15'}`}
+                   disabled={scanning}
+                   onClick={async () => {
+                     if (scanning) return
+                     setScanning(true)
+                     try {
+                       await API.rescan()
+                       const t = await API.tree(treeMode, mediaFilter)
+                       setTree(t); setOpen(new Set([t.path])); setSelected(t.path); setDateRange({ from: 0, to: 0 })
+                     } catch {}
+                     setScanning(false)
+                   }}
                    title="Rescan Library"
                  >
-                   <RefreshCcw className="w-4 h-4" /> Rescan
+                   <RefreshCcw className={`w-4 h-4 ${scanning ? 'animate-spin' : ''}`} /> {scanning ? 'Scanning' : 'Rescan'}
                  </button>
                </div>
 
