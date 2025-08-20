@@ -882,9 +882,9 @@ function buildDateTreeForScope(scopePath, filter = 'all') {
   const kindWhere = filter === 'images' ? " AND kind = 'image'" : (filter === 'videos' ? " AND kind = 'video'" : '')
   const rows = db.prepare(`
     SELECT
-      CAST(strftime('%Y', mtime/1000, 'unixepoch') AS INTEGER) AS y,
-      CAST(strftime('%m', mtime/1000, 'unixepoch') AS INTEGER) AS m,
-      CAST(strftime('%d', mtime/1000, 'unixepoch') AS INTEGER) AS d,
+      CAST(strftime('%Y', mtime/1000, 'unixepoch', 'localtime') AS INTEGER) AS y,
+      CAST(strftime('%m', mtime/1000, 'unixepoch', 'localtime') AS INTEGER) AS m,
+      CAST(strftime('%d', mtime/1000, 'unixepoch', 'localtime') AS INTEGER) AS d,
       COUNT(*) AS c
     FROM images
     WHERE folder >= ? AND folder < ?${kindWhere}
@@ -910,16 +910,16 @@ function buildDateTreeForScope(scopePath, filter = 'all') {
     const monthKey = `${yearKey}-${String(r.m).padStart(2, '0')}`
     let mNode = ymMap.get(monthKey)
     if (!mNode) {
-      const dateForName = new Date(Date.UTC(yearKey, r.m - 1, 1))
-      const monthName = dateForName.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' })
+      const dateForName = new Date(yearKey, r.m - 1, 1)
+      const monthName = dateForName.toLocaleString('en-US', { month: 'long' })
       mNode = { name: monthName, path: `date:M-${yearKey}-${String(r.m).padStart(2, '0')}`, count: 0, children: [] }
       ymMap.set(monthKey, mNode)
       yNode.children.push(mNode)
     }
     mNode.count += r.c
 
-    const dateForDay = new Date(Date.UTC(r.y, r.m - 1, r.d))
-    const weekday = dateForDay.toLocaleString('en-US', { weekday: 'short', timeZone: 'UTC' })
+    const dateForDay = new Date(r.y, r.m - 1, r.d)
+    const weekday = dateForDay.toLocaleString('en-US', { weekday: 'short' })
     const dName = `${weekday}, ${r.d}`
     const dPath = `date:D-${r.y}-${String(r.m).padStart(2, '0')}-${String(r.d).padStart(2, '0')}`
     mNode.children.push({ name: dName, path: dPath, count: r.c, children: [] })
