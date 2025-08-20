@@ -103,14 +103,14 @@ services:
     environment:
       HOST: "0.0.0.0"
       PORT: "6363"
-      ADMIN_USER: "admin"
-      ADMIN_PASS: "admin123"
+      ADMIN_USER: "admin" # <— change this to your admin user
+      ADMIN_PASS: "admin123" # <— change this to your admin pass
     ports:
       - "6363:6363"
     volumes:
       # Linux (example)
-      - /home/youruser/Pictures:/pictures:ro
-      - /home/youruser/.liquid-photos-cache:/app/.cache
+      - /home/youruser/Pictures:/pictures:ro # <— change this to your Pictures/Videos folder
+      - /home/youruser/.liquid-photos-cache:/app/.cache # <— change this to your preferred cache folder for thumbnails/DB
       # macOS (example)
       # - /Users/youruser/Pictures:/pictures:ro
       # - /Users/youruser/.liquid-photos-cache:/app/.cache
