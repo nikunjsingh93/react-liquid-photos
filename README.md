@@ -34,18 +34,6 @@ The application includes intelligent optimization to improve loading times, espe
 - **Full Resolution Mode**: Toggle to view original quality images when needed
 - **Download Button**: Always downloads the original full-quality file
 
-### Configuration
-
-You can customize optimization settings using environment variables:
-
-```bash
-# Thumbnail width (default: 512)
-THUMB_WIDTH=512
-
-# Optimized view width (default: 1920)
-VIEW_WIDTH=1920
-```
-
 ## Admin: Scan Media
 
 - **Full Rescan**: Re-index the entire library
@@ -151,21 +139,6 @@ docker run -d \
   -e ADMIN_PASS=admin123 \
   -v "/home/youruser/Pictures":/pictures:ro \
   -v "/home/youruser/.liquid-photos-cache":/app/.cache \
-  nikunjsingh/liquid-photos:latest
-```
-
-Windows (PowerShell) example:
-```powershell
-docker run -d `
-  --name liquid-photos `
-  --restart unless-stopped `
-  -p 6363:6363 `
-  -e HOST=0.0.0.0 `
-  -e PORT=6363 `
-  -e ADMIN_USER=admin `
-  -e ADMIN_PASS=admin123 `
-  -v "C:/Users/youruser/Pictures:/pictures:ro" `
-  -v "C:/Users/youruser/.liquid-photos-cache:/app/.cache" `
   nikunjsingh/liquid-photos:latest
 ```
 
