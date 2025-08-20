@@ -281,6 +281,7 @@ async function scanAndIndex() {
   let count = 0
   const tx = db.transaction((batch) => { for (const b of batch) b() })
   const ops = []
+  const scannedPaths = new Set()
   for (const abs of entries) {
     const ext = path.extname(abs).toLowerCase()
     const isImage = IMG_EXT.has(ext)
@@ -300,25 +301,58 @@ async function scanAndIndex() {
       }
       const kind = isVideo ? 'video' : 'image'
       ops.push(() => insertStmt.run(r, fname, folder, Math.floor(st.ctimeMs), Math.floor(st.mtimeMs), st.size, kind, Math.floor(durationMs)))
+      scannedPaths.add(r)
       count++
     } catch {}
   }
   tx(ops)
+
+  // Remove stale rows (files that no longer exist after renames/deletes)
+  try {
+    const delStmt = db.prepare('DELETE FROM images WHERE path = ?')
+    const existing = db.prepare('SELECT path FROM images').all()
+    const delOps = []
+    for (const row of existing) {
+      if (!scannedPaths.has(row.path)) delOps.push(() => delStmt.run(row.path))
+    }
+    if (delOps.length) tx(delOps)
+  } catch {}
+
   console.log(`[index] done: ${count.toLocaleString()} files in ${((Date.now()-t0)/1000).toFixed(1)}s`)
 }
 
 async function scanAndIndexUnder(relPrefix) {
   const prefix = normalizeScopeInput(relPrefix || '')
   if (!prefix) return scanAndIndex()
-  console.log(`[index] scanning path '${prefix}'…`)
+
+  // If the requested prefix no longer exists (e.g., folder was renamed),
+  // fall back to the closest existing parent directory so we discover the new name
+  // and prune the old one.
+  let effective = prefix
+  async function dirExists(p) {
+    try { const st = await fsp.stat(path.join(PHOTOS_ROOT, p)); return st.isDirectory() } catch { return false }
+  }
+  if (!(await dirExists(effective))) {
+    const idx = effective.lastIndexOf('/')
+    const parent = idx >= 0 ? effective.slice(0, idx) : ''
+    if (parent && await dirExists(parent)) effective = parent
+    else if (!parent) effective = ''
+  }
+  if (!effective) {
+    // as a last resort, do a full scan
+    return scanAndIndex()
+  }
+
+  console.log(`[index] scanning path '${effective}'…`)
   const t0 = Date.now()
-  const entries = await fg([`${prefix}/**/*`], {
+  const entries = await fg([`${effective}/**/*`], {
     cwd: PHOTOS_ROOT, dot: false, onlyFiles: true,
     unique: true, absolute: true, suppressErrors: true
   })
   let count = 0
   const tx = db.transaction((batch) => { for (const b of batch) b() })
   const ops = []
+  const scannedPaths = new Set()
   for (const abs of entries) {
     const ext = path.extname(abs).toLowerCase()
     const isImage = IMG_EXT.has(ext)
@@ -338,10 +372,25 @@ async function scanAndIndexUnder(relPrefix) {
       }
       const kind = isVideo ? 'video' : 'image'
       ops.push(() => insertStmt.run(r, fname, folder, Math.floor(st.ctimeMs), Math.floor(st.mtimeMs), st.size, kind, Math.floor(durationMs)))
+      scannedPaths.add(r)
       count++
     } catch {}
   }
   tx(ops)
+
+  // Remove stale rows under the effective prefix only
+  try {
+    const lower = effective
+    const upper = effective + '\uFFFF'
+    const rows = db.prepare('SELECT path FROM images WHERE folder >= ? AND folder < ?').all(lower, upper)
+    const delStmt = db.prepare('DELETE FROM images WHERE path = ?')
+    const delOps = []
+    for (const row of rows) {
+      if (!scannedPaths.has(row.path)) delOps.push(() => delStmt.run(row.path))
+    }
+    if (delOps.length) tx(delOps)
+  } catch {}
+
   console.log(`[index] path done: ${count.toLocaleString()} files in ${((Date.now()-t0)/1000).toFixed(1)}s`)
 }
 
