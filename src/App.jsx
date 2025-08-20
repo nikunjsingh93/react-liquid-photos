@@ -747,18 +747,18 @@ export default function App() {
                      const parts = String(p).split(':')[1]
                      if (parts.startsWith('D-')) {
                        const [y, m, d] = parts.slice(2).split('-').map(n => parseInt(n, 10))
-                       const from = new Date(y, m - 1, d).getTime()
-                       const to = new Date(y, m - 1, d + 1).getTime()
+                       const from = Date.UTC(y, m - 1, d)
+                       const to = Date.UTC(y, m - 1, d + 1)
                        setDateRange({ from, to })
                      } else if (parts.startsWith('M-')) {
                        const [y, m] = parts.slice(2).split('-').map(n => parseInt(n, 10))
-                       const from = new Date(y, m - 1, 1).getTime()
-                       const to = new Date(y, m, 1).getTime()
+                       const from = Date.UTC(y, m - 1, 1)
+                       const to = Date.UTC(y, m, 1)
                        setDateRange({ from, to })
                      } else if (parts.startsWith('Y-')) {
                        const y = parseInt(parts.slice(2), 10)
-                       const from = new Date(y, 0, 1).getTime()
-                       const to = new Date(y + 1, 0, 1).getTime()
+                       const from = Date.UTC(y, 0, 1)
+                       const to = Date.UTC(y + 1, 0, 1)
                        setDateRange({ from, to })
                      }
                    }
