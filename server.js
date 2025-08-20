@@ -307,6 +307,44 @@ async function scanAndIndex() {
   console.log(`[index] done: ${count.toLocaleString()} files in ${((Date.now()-t0)/1000).toFixed(1)}s`)
 }
 
+async function scanAndIndexUnder(relPrefix) {
+  const prefix = normalizeScopeInput(relPrefix || '')
+  if (!prefix) return scanAndIndex()
+  console.log(`[index] scanning path '${prefix}'…`)
+  const t0 = Date.now()
+  const entries = await fg([`${prefix}/**/*`], {
+    cwd: PHOTOS_ROOT, dot: false, onlyFiles: true,
+    unique: true, absolute: true, suppressErrors: true
+  })
+  let count = 0
+  const tx = db.transaction((batch) => { for (const b of batch) b() })
+  const ops = []
+  for (const abs of entries) {
+    const ext = path.extname(abs).toLowerCase()
+    const isImage = IMG_EXT.has(ext)
+    const isVideo = VIDEO_EXT.has(ext)
+    if (!isImage && !isVideo) continue
+    try {
+      const st = await fsp.stat(abs)
+      const r = rel(abs)
+      const folder = toPosix(path.dirname(r))
+      const fname = path.basename(abs)
+      let durationMs = 0
+      if (isVideo) {
+        try {
+          const meta = await probeVideoMeta(abs)
+          durationMs = Math.floor(Number(meta?.duration || 0))
+        } catch {}
+      }
+      const kind = isVideo ? 'video' : 'image'
+      ops.push(() => insertStmt.run(r, fname, folder, Math.floor(st.ctimeMs), Math.floor(st.mtimeMs), st.size, kind, Math.floor(durationMs)))
+      count++
+    } catch {}
+  }
+  tx(ops)
+  console.log(`[index] path done: ${count.toLocaleString()} files in ${((Date.now()-t0)/1000).toFixed(1)}s`)
+}
+
 async function ensureThumb(absPath) {
   const h = hashPath(absPath)
   const out = path.join(THUMBS_DIR, `${h}.webp`)
@@ -965,8 +1003,12 @@ app.get('/api/photos', requireAuth, (req, res) => {
 })
 
 /* rescan: admin only */
-app.post('/api/index', requireAdmin, async (_req, res) => {
-  try { await scanAndIndex(); res.json({ ok: true }) } catch (e) { res.status(500).json({ error: e.message }) }
+app.post('/api/index', requireAdmin, async (req, res) => {
+  try {
+    const p = (req.body && typeof req.body.path === 'string') ? req.body.path : ''
+    if (p) { await scanAndIndexUnder(p) } else { await scanAndIndex() }
+    res.json({ ok: true })
+  } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
 /* media endpoints: auth + scope check */

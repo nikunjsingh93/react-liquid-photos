@@ -49,6 +49,8 @@ const API = {
     (await fetch(apiUrl(`/api/meta/${id}`), { credentials: 'include', ...options })).json(),
   rescan: async () =>
     (await fetch(apiUrl('/api/index'), { method: 'POST', credentials: 'include' })).json(),
+  rescanPath: async (path) =>
+    (await fetch(apiUrl('/api/index'), { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) })).json(),
 }
 
 /* ----- UI helpers ----- */
@@ -69,27 +71,29 @@ function isRawName(name) {
 }
 
 /* Scrollable tree ONLY (header label + tree) */
-function SidebarTreeContent({ tree, open, toggle, select, selected, mode = 'folders', onToggleMode }) {
+function SidebarTreeContent({ tree, open, toggle, select, selected, mode = 'folders', onToggleMode, showHeader = true }) {
   if (!tree) return null
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-2 pr-1" style={{ WebkitOverflowScrolling: 'touch' }}>
-      <div className="flex items-center gap-2 text-slate-300 mb-2 px-2 shrink-0">
-        <FolderTree className="w-5 h-5" />
-        <span className="text-sm font-medium">{mode === 'dates' ? 'Dates' : 'Folders'}</span>
-        <div className="ml-auto flex items-center gap-1">
-          <button
-            className={`text-xs px-2 py-0.5 rounded ${mode === 'folders' ? 'bg-white/20' : 'bg-white/10'} border border-white/10`}
-            onClick={() => onToggleMode && onToggleMode('folders')}
-            title="Browse by folders"
-          >Folders</button>
-          <button
-            className={`text-xs px-2 py-0.5 rounded ${mode === 'dates' ? 'bg-white/20' : 'bg-white/10'} border border-white/10`}
-            onClick={() => onToggleMode && onToggleMode('dates')}
-            title="Browse by dates"
-          >Dates</button>
+      {showHeader && (
+        <div className="flex items-center gap-2 text-slate-300 mb-2 px-2 shrink-0">
+          <FolderTree className="w-5 h-5" />
+          <span className="text-sm font-medium">{mode === 'dates' ? 'Dates' : 'Folders'}</span>
+          <div className="ml-auto flex items-center gap-1">
+            <button
+              className={`text-xs px-2 py-0.5 rounded ${mode === 'folders' ? 'bg-white/20' : 'bg-white/10'} border border-white/10`}
+              onClick={() => onToggleMode && onToggleMode('folders')}
+              title="Browse by folders"
+            >Folders</button>
+            <button
+              className={`text-xs px-2 py-0.5 rounded ${mode === 'dates' ? 'bg-white/20' : 'bg-white/10'} border border-white/10`}
+              onClick={() => onToggleMode && onToggleMode('dates')}
+              title="Browse by dates"
+            >Dates</button>
+          </div>
         </div>
-      </div>
-      <div className="overflow-y-auto" style={{ height: 'calc(100% - 40px)' }}>
+      )}
+      <div className="overflow-y-auto" style={{ height: showHeader ? 'calc(100% - 40px)' : '100%' }}>
         <TreeNode node={tree} depth={0} open={open} toggle={toggle} select={select} selected={selected} />
       </div>
     </div>
@@ -265,6 +269,17 @@ export default function App() {
   const resizeRef = useRef(null)
   const [resizing, setResizing] = useState(false)
   const [scanning, setScanning] = useState(false)
+  const [scanMenuOpen, setScanMenuOpen] = useState(false)
+  const [scanSelectedPath, setScanSelectedPath] = useState('')
+  const [scanMenuAnchor, setScanMenuAnchor] = useState('') // 'sidebar' | 'header' | ''
+  const [scanTree, setScanTree] = useState(null)
+
+  const loadScanTree = useCallback(async () => {
+    try {
+      const t = await API.tree('folders', mediaFilter)
+      setScanTree(t)
+    } catch {}
+  }, [mediaFilter])
 
   // loader control
   const photoIdsRef = useRef(new Set())
@@ -572,24 +587,84 @@ export default function App() {
                  <ImageIcon className="w-5 h-5 text-slate-200" />
                  <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
                  {user?.is_admin && (
+                 <>
                    <button
-                     className={`ml-auto inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg border border-white/10 ${scanning ? 'bg-white/20' : 'bg-white/10 hover:bg-white/15'}`}
-                     disabled={scanning}
-                     onClick={async () => {
-                       if (scanning) return
-                       setScanning(true)
-                       try {
-                         await API.rescan()
-                         const t = await API.tree(treeMode, mediaFilter)
-                         setTree(t); setOpen(new Set([t.path])); setSelected(t.path); setDateRange({ from: 0, to: 0 })
-                       } catch {}
-                       setScanning(false)
-                     }}
-                     title="Rescan Library"
+                     className="ml-auto inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg border border-white/10 bg-white/10 hover:bg-white/15"
+                     title="Scan"
+                     onClick={async () => { setScanMenuAnchor('sidebar'); setScanMenuOpen(v => !v); if (!scanTree) await loadScanTree() }}
                    >
-                     <RefreshCcw className={`w-4 h-4 ${scanning ? 'animate-spin' : ''}`} /> {scanning ? 'Scanning' : 'Rescan'}
+                     Scan
                    </button>
-                 )}
+                   {scanMenuOpen && scanMenuAnchor === 'sidebar' && (
+                    <div className="fixed left-1/2 -translate-x-1/2 top-[72px] z-[1000] w-[90vw] max-w-[520px] max-h-[70vh] rounded-lg border border-white/10 bg-zinc-950 shadow-2xl">
+                       <div className="p-3">
+                         <button
+                           className={`inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg border border-white/10 ${scanning ? 'bg-white/20' : 'bg-white/10 hover:bg-white/15'}`}
+                           disabled={scanning}
+                           onClick={async () => {
+                             if (scanning) return
+                             setScanning(true)
+                             try {
+                               await API.rescan()
+                               const t = await API.tree(treeMode, mediaFilter)
+                               setTree(t); setOpen(new Set([t.path])); setSelected(t.path); setDateRange({ from: 0, to: 0 })
+                             } catch {}
+                             setScanning(false)
+                           }}
+                           title="Full Rescan"
+                         >
+                           <RefreshCcw className={`w-4 h-4 ${scanning ? 'animate-spin' : ''}`} /> {scanning ? 'Scanning' : 'Full Rescan'}
+                         </button>
+                       </div>
+                       <div className="border-t border-white/10" />
+                       <div className="p-2">
+                         <div className="text-xs text-slate-300 font-semibold mb-2">Scan Path</div>
+                         <div className="h-64 overflow-auto rounded border border-white/10 p-2">
+                           <SidebarTreeContent
+                             tree={scanTree || tree}
+                             open={open}
+                             toggle={(p) => toggle(p)}
+                             selected={scanSelectedPath}
+                             select={(p) => {
+                               if (String(p).startsWith('date:')) return
+                               setScanSelectedPath(p)
+                             }}
+                            showHeader={false}
+                           />
+                         </div>
+                         <div className="mt-3 flex items-center justify-end gap-2">
+                           <button
+                             className="text-xs px-3 py-1.5 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                             onClick={() => { setScanMenuOpen(false); setScanSelectedPath('') }}
+                           >
+                             Cancel
+                           </button>
+                           <button
+                             className={`text-xs px-3 py-1.5 rounded ${scanSelectedPath ? 'bg-emerald-500/20 hover:bg-emerald-500/25 border-emerald-500/40 text-emerald-300' : 'bg-white/10 border-white/10 opacity-50 cursor-not-allowed'} border`}
+                             disabled={!scanSelectedPath || scanning}
+                             onClick={async () => {
+                               if (!scanSelectedPath) return
+                               setScanning(true)
+                               try {
+                                 const r = await API.rescanPath(scanSelectedPath)
+                                 if (!r?.ok) throw new Error(r?.error || 'Scan failed')
+                                 const t = await API.tree(treeMode, mediaFilter)
+                                 setTree(t)
+                                 setSelected(scanSelectedPath)
+                                 setOpen(prev => new Set(prev).add(scanSelectedPath))
+                               } catch {}
+                               setScanning(false)
+                               setScanMenuOpen(false)
+                             }}
+                           >
+                             Scan Now
+                           </button>
+                         </div>
+                       </div>
+                     </div>
+                   )}
+                 </>
+                )}
                </div>
 
                {/* Scrollable tree in the middle */}
@@ -893,7 +968,85 @@ export default function App() {
               </button>
               <ImageIcon className="w-5 h-5 text-slate-200" />
               <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
-              <div className="ml-auto" />
+              {user?.is_admin && (
+                <div className="relative ml-auto">
+                  <button
+                    className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg border border-white/10 bg-white/10 hover:bg-white/15"
+                    title="Scan"
+                    onClick={() => { setScanMenuAnchor('sidebar'); setScanMenuOpen(v => !v) }}
+                  >
+                    Scan
+                  </button>
+                  {scanMenuOpen && scanMenuAnchor === 'sidebar' && (
+                    <div className="fixed left-1/2 -translate-x-1/2 top-[64px] z-[1000] w-[90vw] max-w-[340px] max-h-[70vh] rounded-lg border border-white/10 bg-zinc-950 shadow-2xl">
+                      <div className="p-3 border-b border-white/10 flex items-center gap-2">
+                        <button
+                          className={`inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg border border-white/10 ${scanning ? 'bg-white/20' : 'bg-white/10 hover:bg-white/15'}`}
+                          disabled={scanning}
+                          onClick={async () => {
+                            if (scanning) return
+                            setScanning(true)
+                            try {
+                              await API.rescan()
+                              const t = await API.tree(treeMode, mediaFilter)
+                              setTree(t); setOpen(new Set([t.path])); setSelected(t.path); setDateRange({ from: 0, to: 0 })
+                            } catch {}
+                            setScanning(false)
+                          }}
+                          title="Full Rescan"
+                        >
+                          <RefreshCcw className={`w-4 h-4 ${scanning ? 'animate-spin' : ''}`} /> {scanning ? 'Scanning' : 'Full Rescan'}
+                        </button>
+                      </div>
+                      <div className="border-b border-white/10" />
+                      <div className="p-2">
+                        <div className="text-xs text-slate-300 font-semibold mb-2">Scan Path</div>
+                        <div className="h-56 overflow-auto rounded border border-white/10 p-2">
+                          <SidebarTreeContent
+                            tree={tree}
+                            open={open}
+                            toggle={(p) => toggle(p)}
+                            selected={scanSelectedPath}
+                            select={(p) => {
+                              if (String(p).startsWith('date:')) return
+                              setScanSelectedPath(p)
+                            }}
+                            showHeader={false}
+                          />
+                        </div>
+                        <div className="mt-3 flex items-center justify-end gap-2">
+                          <button
+                            className="text-xs px-3 py-1.5 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                            onClick={() => { setScanMenuOpen(false); setScanSelectedPath('') }}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            className={`text-xs px-3 py-1.5 rounded ${scanSelectedPath ? 'bg-emerald-500/20 hover:bg-emerald-500/25 border-emerald-500/40 text-emerald-300' : 'bg-white/10 border-white/10 opacity-50 cursor-not-allowed'} border`}
+                            disabled={!scanSelectedPath || scanning}
+                            onClick={async () => {
+                              if (!scanSelectedPath) return
+                              setScanning(true)
+                              try {
+                                const r = await API.rescanPath(scanSelectedPath)
+                                if (!r?.ok) throw new Error(r?.error || 'Scan failed')
+                                const t = await API.tree(treeMode, mediaFilter)
+                                setTree(t)
+                                setSelected(scanSelectedPath)
+                                setOpen(prev => new Set(prev).add(scanSelectedPath))
+                              } catch {}
+                              setScanning(false)
+                              setScanMenuOpen(false)
+                            }}
+                          >
+                            Scan Now
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Scrollable middle on mobile too (unchanged) */}
