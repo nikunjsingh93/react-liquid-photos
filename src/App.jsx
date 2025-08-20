@@ -581,6 +581,7 @@ export default function App() {
     const t = e.touches[0]
     const dx = t.clientX - touchStartRef.current.x
     const dy = t.clientY - touchStartRef.current.y
+    // Prevent default for horizontal swipes to avoid page scrolling
     if (Math.abs(dx) > Math.abs(dy)) e.preventDefault()
   }
   const onTouchEnd = (e) => {
@@ -593,8 +594,29 @@ export default function App() {
     const dt = Date.now() - start.t
     const THRESH = 50
     const MAX_ANGLE = 0.57
-    if (adx > THRESH && (ady / (adx || 1)) < MAX_ANGLE && dt < 800) {
+    const MIN_SWIPE_TIME = 100
+    const MAX_SWIPE_TIME = 800
+    
+    // Only process if swipe is fast enough and not too slow
+    if (dt < MIN_SWIPE_TIME || dt > MAX_SWIPE_TIME) return
+    
+    // Horizontal swipe (left/right) - change photo
+    if (adx > THRESH && (ady / (adx || 1)) < MAX_ANGLE) {
       if (dx < 0) next(); else prev()
+    }
+    // Vertical swipe (up/down) - info panel and close
+    else if (ady > THRESH && (adx / (ady || 1)) < MAX_ANGLE) {
+      if (dy < 0) {
+        // Swipe up - open info panel
+        setInfoOpen(true)
+      } else {
+        // Swipe down - close info panel or close viewer
+        if (infoOpen) {
+          setInfoOpen(false)
+        } else {
+          closeViewer()
+        }
+      }
     }
   }
 
@@ -1309,9 +1331,6 @@ export default function App() {
           onDownload={downloadActive}
           ensureMeta={ensureMeta}
           meta={meta}
-          onTouchStart={onTouchStart}
-          onTouchMove={onTouchMove}
-          onTouchEnd={onTouchEnd}
         />
       )}
     </GlassShell>
@@ -1321,7 +1340,7 @@ export default function App() {
 function prevLen(arr) { return Array.isArray(arr) ? arr.length : 0 }
 
 /* ----- HLS-capable Video Player ----- */
-function VideoPlayer({ srcOriginal, srcHls, srcReduced, mode, style, onTouchStart, onTouchMove, onTouchEnd, poster }) {
+function VideoPlayer({ srcOriginal, srcHls, srcReduced, mode, style, poster }) {
   const videoRef = useRef(null)
   useEffect(() => {
     const video = videoRef.current
@@ -1353,9 +1372,6 @@ function VideoPlayer({ srcOriginal, srcHls, srcReduced, mode, style, onTouchStar
       controls
       autoPlay={false}
       style={style}
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
       poster={poster}
     />
   )
@@ -1625,7 +1641,7 @@ function InfoPanel({ meta, fallback }) {
 /* ----- Viewer ----- */
 function Viewer({
   isSmall, infoOpen, setInfoOpen, photo, truncatedName, imgMaxHeight,
-  onPrev, onNext, onClose, onDownload, ensureMeta, meta, onTouchStart, onTouchMove, onTouchEnd
+  onPrev, onNext, onClose, onDownload, ensureMeta, meta
 }) {
   const [useFullRes, setUseFullRes] = useState(false)
   const [imageLoading, setImageLoading] = useState(false)
@@ -1636,8 +1652,62 @@ function Viewer({
   useEffect(() => {
     setImageLoading(false)
   }, [photo.id])
+
+  // Touch swipe handlers
+  const touchStartRef = useRef({ x: 0, y: 0, t: 0 })
+  const onTouchStart = (e) => {
+    const t = e.touches[0]
+    touchStartRef.current = { x: t.clientX, y: t.clientY, t: Date.now() }
+  }
+  const onTouchMove = (e) => {
+    const t = e.touches[0]
+    const dx = t.clientX - touchStartRef.current.x
+    const dy = t.clientY - touchStartRef.current.y
+    // Prevent default for horizontal swipes to avoid page scrolling
+    if (Math.abs(dx) > Math.abs(dy)) e.preventDefault()
+  }
+  const onTouchEnd = (e) => {
+    const start = touchStartRef.current
+    const end = e.changedTouches[0]
+    const dx = end.clientX - start.x
+    const dy = end.clientY - start.y
+    const adx = Math.abs(dx)
+    const ady = Math.abs(dy)
+    const dt = Date.now() - start.t
+    const THRESH = 50
+    const MAX_ANGLE = 0.57
+    const MIN_SWIPE_TIME = 100
+    const MAX_SWIPE_TIME = 800
+    
+    // Only process if swipe is fast enough and not too slow
+    if (dt < MIN_SWIPE_TIME || dt > MAX_SWIPE_TIME) return
+    
+    // Horizontal swipe (left/right) - change photo
+    if (adx > THRESH && (ady / (adx || 1)) < MAX_ANGLE) {
+      if (dx < 0) onNext(); else onPrev()
+    }
+    // Vertical swipe (up/down) - info panel and close
+    else if (ady > THRESH && (adx / (ady || 1)) < MAX_ANGLE) {
+      if (dy < 0) {
+        // Swipe up - open info panel
+        setInfoOpen(true)
+      } else {
+        // Swipe down - close info panel or close viewer
+        if (infoOpen) {
+          setInfoOpen(false)
+        } else {
+          onClose()
+        }
+      }
+    }
+  }
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex">
+    <div 
+      className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex"
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+    >
       <div className="flex-1 flex flex-col">
         <div className="relative flex items-center px-4" style={{ height: HEADER_H }}>
           <div className="pointer-events-none sm:absolute sm:left-1/2 sm:-translate-x-1/2 sm:text-center sm:max-w-[60vw] min-w-0 flex-1">
@@ -1718,9 +1788,6 @@ function Viewer({
                 height: 'auto',
                 objectFit: 'contain'
               }}
-              onTouchStart={onTouchStart}
-              onTouchMove={onTouchMove}
-              onTouchEnd={onTouchEnd}
               poster={apiUrl(`/view/${photo.id}`)}
             />
           ) : (
@@ -1728,9 +1795,6 @@ function Viewer({
               src={apiUrl(useFullRes ? `/media/${photo.id}` : `/view/${photo.id}`)}
               alt={photo.fname}
               style={{ maxHeight: imgMaxHeight, maxWidth: isSmall && infoOpen ? '94vw' : '92vw' }}
-              onTouchStart={onTouchStart}
-              onTouchMove={onTouchMove}
-              onTouchEnd={onTouchEnd}
               onLoad={() => setImageLoading(false)}
               onError={() => setImageLoading(false)}
             />
