@@ -105,7 +105,6 @@ services:
       PORT: "6363"
       ADMIN_USER: "admin"
       ADMIN_PASS: "admin123"
-      # PHOTOS_PATH can be omitted (defaults to /pictures)
     ports:
       - "6363:6363"
     volumes:
