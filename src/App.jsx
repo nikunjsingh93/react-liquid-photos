@@ -1772,29 +1772,24 @@ function Viewer({
           </div>
           <div className="ml-auto flex items-center gap-2">
             {!isVideo && (
-              <div className="flex items-center gap-1">
-                <button
-                  className={`p-2 rounded-full border border-white/10 hover:bg-white/20 ${useFullRes ? 'bg-white/20' : 'bg-white/10'}`}
-                  onClick={() => {
-                    setUseFullRes(!useFullRes)
-                    setImageLoading(true)
-                  }}
-                  title={useFullRes ? 'Switch to optimized view' : 'Switch to full resolution'}
-                >
-                  <Maximize2 className="w-6 h-6 text-white" />
-                </button>
-                <span className="text-xs text-white/70 px-2 py-1 rounded bg-black/30">
-                  {useFullRes ? 'Full' : 'Optimized'}
-                </span>
-              </div>
+              <button
+                className={`px-3 py-1 rounded-full border border-white/10 ${useFullRes ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
+                onClick={() => {
+                  setUseFullRes(!useFullRes)
+                  setImageLoading(true)
+                }}
+                title={useFullRes ? 'Switch to Optimized view' : 'Switch to Original view'}
+              >
+                {useFullRes ? 'Original' : 'Optimized'}
+              </button>
             )}
             {isVideo && (
               <button
                 className={`px-3 py-1 rounded-full border border-white/10 ${quality ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
                 onClick={() => setQuality(q => (q === 'original' ? 'reduced' : 'original'))}
-                title={quality === 'original' ? 'Tap to switch to Reduced' : 'Tap to switch to Original'}
+                title={quality === 'original' ? 'Tap to switch to Optimized' : 'Tap to switch to Original'}
               >
-                {quality === 'original' ? 'Original' : 'Reduced'}
+                {quality === 'original' ? 'Original' : 'Optimized'}
               </button>
             )}
             <button
