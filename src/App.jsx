@@ -227,6 +227,61 @@ function formatDayHeader(mtime) {
     return d.toDateString()
   }
 }
+
+function formatExifDate(dateString) {
+  if (!dateString) return ''
+  
+  try {
+    // Handle different EXIF date formats
+    let date
+    
+    // Format: "YYYY:MM:DD HH:MM:SS" (most common EXIF format)
+    if (dateString.includes(':') && dateString.includes(' ') && !dateString.includes('T')) {
+      const [datePart, timePart] = dateString.split(' ')
+      if (datePart && datePart.includes(':')) {
+        const [year, month, day] = datePart.split(':').map(Number)
+        if (year && month && day) {
+          date = new Date(year, month - 1, day)
+        }
+      }
+    }
+    // Format: ISO string (2025-08-19T16:22:06.000Z) - most common now
+    else if (dateString.includes('T') || dateString.includes('Z')) {
+      date = new Date(dateString)
+    }
+    // Format: "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS"
+    else if (dateString.includes('-')) {
+      date = new Date(dateString)
+    }
+    // Other standard formats
+    else {
+      date = new Date(dateString)
+    }
+    
+    // Check if the date is valid
+    if (!date || isNaN(date.getTime())) {
+      // For debugging in development
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Failed to parse EXIF date:', dateString)
+      }
+      return dateString // Return original if invalid
+    }
+    
+    // Format as "6 August, 2025"
+    return date.toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    })
+  } catch (error) {
+    // For debugging in development
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Error parsing EXIF date:', dateString, error)
+    }
+    // Fallback to original string if parsing fails
+    return dateString
+  }
+}
 const HEADER_H = 56
 const MOBILE_INFO_VH = 40
 
@@ -1597,7 +1652,7 @@ function InfoPanel({ meta, fallback }) {
         {meta?.exif && Object.keys(meta.exif).length > 0 ? (
           <div className="space-y-1 text-xs text-slate-300">
             {(meta.exif.DateTimeOriginal || meta.exif.DateTime) && (
-              <div>Date Taken: <span className="text-slate-100">{meta.exif.DateTimeOriginal || meta.exif.DateTime}</span></div>
+              <div>Date Taken: <span className="text-slate-100">{formatExifDate(meta.exif.DateTimeOriginal || meta.exif.DateTime)}</span></div>
             )}
             {(meta.exif.Make || meta.exif.Model) && (
               <div>Camera: <span className="text-slate-100">{[meta.exif.Make, meta.exif.Model].filter(Boolean).join(' ')}</span></div>
