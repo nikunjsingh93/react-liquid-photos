@@ -1510,17 +1510,40 @@ function InfoPanel({ meta, fallback }) {
       </div>
       <div className="mt-4">
         <div className="text-xs font-semibold text-slate-300 mb-2">EXIF</div>
-        {meta?.exif ? (
+        {meta?.exif && Object.keys(meta.exif).length > 0 ? (
           <div className="space-y-1 text-xs text-slate-300">
-            {meta.exif.DateTimeOriginal && <div>Date Taken: <span className="text-slate-100">{meta.exif.DateTimeOriginal}</span></div>}
-            {(meta.exif.Make || meta.exif.Model) && <div>Camera: <span className="text-slate-100">{[meta.exif.Make, meta.exif.Model].filter(Boolean).join(' ')}</span></div>}
-            {meta.exif.LensModel && <div>Lens: <span className="text-slate-100">{meta.exif.LensModel}</span></div>}
-            {meta.exif.FNumber && <div>Aperture: <span className="text-slate-100">f/{meta.exif.FNumber}</span></div>}
-            {meta.exif.ExposureTime && <div>Shutter: <span className="text-slate-100">{meta.exif.ExposureTime}s</span></div>}
-            {meta.exif.ISO && <div>ISO: <span className="text-slate-100">{meta.exif.ISO}</span></div>}
-            {meta.exif.FocalLength && <div>Focal: <span className="text-slate-100">{meta.exif.FocalLength}mm</span></div>}
+            {(meta.exif.DateTimeOriginal || meta.exif.DateTime) && (
+              <div>Date Taken: <span className="text-slate-100">{meta.exif.DateTimeOriginal || meta.exif.DateTime}</span></div>
+            )}
+            {(meta.exif.Make || meta.exif.Model) && (
+              <div>Camera: <span className="text-slate-100">{[meta.exif.Make, meta.exif.Model].filter(Boolean).join(' ')}</span></div>
+            )}
+            {(meta.exif.LensModel || meta.exif.Lens) && (
+              <div>Lens: <span className="text-slate-100">{meta.exif.LensModel || meta.exif.Lens}</span></div>
+            )}
+            {(meta.exif.FNumber || meta.exif.ApertureValue) && (
+              <div>Aperture: <span className="text-slate-100">f/{meta.exif.FNumber || meta.exif.ApertureValue}</span></div>
+            )}
+            {(meta.exif.ExposureTime || meta.exif.ShutterSpeedValue) && (
+              <div>Shutter: <span className="text-slate-100">{meta.exif.ExposureTime || meta.exif.ShutterSpeedValue}s</span></div>
+            )}
+            {(meta.exif.ISO || meta.exif.ISOSpeedRatings) && (
+              <div>ISO: <span className="text-slate-100">{meta.exif.ISO || meta.exif.ISOSpeedRatings}</span></div>
+            )}
+            {(meta.exif.FocalLength || meta.exif.FocalLengthIn35mmFormat) && (
+              <div>Focal: <span className="text-slate-100">{meta.exif.FocalLength || meta.exif.FocalLengthIn35mmFormat}mm</span></div>
+            )}
             {(meta.exif.GPSLatitude != null && meta.exif.GPSLongitude != null) && (
               <div>GPS: <span className="text-slate-100">{meta.exif.GPSLatitude}, {meta.exif.GPSLongitude}</span></div>
+            )}
+            {/* Debug: Show all available EXIF fields */}
+            {process.env.NODE_ENV === 'development' && (
+              <details className="mt-2">
+                <summary className="text-slate-400 cursor-pointer">Debug: All EXIF fields</summary>
+                <pre className="text-[8px] text-slate-500 mt-1 overflow-auto max-h-20">
+                  {JSON.stringify(meta.exif, null, 2)}
+                </pre>
+              </details>
             )}
           </div>
         ) : (

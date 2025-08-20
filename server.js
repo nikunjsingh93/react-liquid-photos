@@ -12,6 +12,7 @@ import Database from 'better-sqlite3'
 import sharp from 'sharp'
 import mime from 'mime-types'
 import archiver from 'archiver'
+import exifr from 'exifr'
 
 /* ---------- config ---------- */
 const ROOT = process.cwd()
@@ -1405,7 +1406,35 @@ app.get('/api/meta/:id', requireAuth, async (req, res) => {
     } else {
       try {
         const md = await sharp(abs).metadata()
-        return res.json({ ...base, format: md?.format || '', width: md?.width || 0, height: md?.height || 0, exif: {} })
+        // Extract EXIF data using exifr
+        let exifData = {}
+        try {
+          exifData = await exifr.parse(abs, {
+            tiff: true,
+            xmp: true,
+            icc: true,
+            iptc: true,
+            jfif: true,
+            ihdr: true,
+            exif: true,
+            gps: true,
+            interop: true,
+            translateValues: true,
+            translateTags: true,
+            reviveValues: true
+          }) || {}
+          console.log('EXIF data extracted for', abs, ':', Object.keys(exifData))
+        } catch (exifError) {
+          console.warn('EXIF extraction failed for', abs, exifError.message)
+        }
+        
+        return res.json({ 
+          ...base, 
+          format: md?.format || '', 
+          width: md?.width || 0, 
+          height: md?.height || 0, 
+          exif: exifData 
+        })
       } catch {
         return res.json({ ...base })
       }
