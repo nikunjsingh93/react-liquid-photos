@@ -2,9 +2,9 @@
 FROM node:20-bookworm-slim AS build
 WORKDIR /app
 
-# System deps for native modules (better-sqlite3, etc.)
+# System deps for native modules (better-sqlite3, etc.) and HEIC support for Sharp
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  python3 make g++ ca-certificates \
+  python3 make g++ ca-certificates libheif-dev \
   && rm -rf /var/lib/apt/lists/*
 
 # Install deps
@@ -21,8 +21,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 # Runtime tools: exiftool for RAW previews, libheif-examples for HEIC, ffmpeg/ffprobe for videos
+# Also include libheif1 for Sharp HEIC support
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  exiftool libheif-examples ffmpeg \
+  exiftool libheif-examples ffmpeg libheif1 \
   && rm -rf /var/lib/apt/lists/*
 
 # Only prod deps

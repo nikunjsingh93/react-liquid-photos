@@ -271,14 +271,25 @@ async function ensureHeicDecodedPreview(absPath) {
   if (await fileExists(out)) return out
   return new Promise((resolve) => {
     const args = [absPath, out]
+    console.log('[heic] converting:', absPath, '->', out)
     const ex = spawn('heif-convert', args, { stdio: ['ignore', 'ignore', 'pipe'] })
     let stderrBuf = ''
     ex.stderr.on('data', (d) => { stderrBuf += String(d) })
     ex.on('close', async (code) => {
-      if (code === 0 && await fileExists(out)) resolve(out)
-      else { try { await fsp.unlink(out) } catch {}; resolve(null) }
+      if (code === 0 && await fileExists(out)) {
+        console.log('[heic] success:', absPath)
+        resolve(out)
+      } else {
+        console.error('[heic] failed:', absPath, 'code:', code, 'stderr:', stderrBuf)
+        try { await fsp.unlink(out) } catch {}
+        resolve(null)
+      }
     })
-    ex.on('error', async () => { try { await fsp.unlink(out) } catch {}; resolve(null) })
+    ex.on('error', async (err) => {
+      console.error('[heic] spawn error:', absPath, err.message)
+      try { await fsp.unlink(out) } catch {}
+      resolve(null)
+    })
   })
 }
 
@@ -423,9 +434,21 @@ async function ensureThumb(absPath) {
           if (!prev) throw e
           await sharp(prev).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
         } else if (isHeicExt(absPath)) {
-          const prev = await ensureHeicDecodedPreview(absPath)
-          if (!prev) throw e
-          await sharp(prev).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
+          console.log('[thumb] processing HEIC:', absPath)
+          // Try Sharp first (if it has HEIC support)
+          try {
+            await sharp(absPath).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
+            console.log('[thumb] HEIC processed with Sharp:', absPath)
+          } catch (sharpError) {
+            console.log('[thumb] Sharp failed for HEIC, trying heif-convert:', absPath, sharpError.message)
+            // Fall back to heif-convert
+            const prev = await ensureHeicDecodedPreview(absPath)
+            if (!prev) {
+              console.error('[thumb] HEIC preview failed:', absPath)
+              throw e
+            }
+            await sharp(prev).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
+          }
         } else {
           throw e
         }
@@ -458,9 +481,21 @@ async function ensureView(absPath) {
           if (!prev) throw e
           await sharp(prev).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
         } else if (isHeicExt(absPath)) {
-          const prev = await ensureHeicDecodedPreview(absPath)
-          if (!prev) throw e
-          await sharp(prev).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
+          console.log('[view] processing HEIC:', absPath)
+          // Try Sharp first (if it has HEIC support)
+          try {
+            await sharp(absPath).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
+            console.log('[view] HEIC processed with Sharp:', absPath)
+          } catch (sharpError) {
+            console.log('[view] Sharp failed for HEIC, trying heif-convert:', absPath, sharpError.message)
+            // Fall back to heif-convert
+            const prev = await ensureHeicDecodedPreview(absPath)
+            if (!prev) {
+              console.error('[view] HEIC preview failed:', absPath)
+              throw e
+            }
+            await sharp(prev).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
+          }
         } else {
           throw e
         }
@@ -1125,8 +1160,12 @@ app.get('/thumb/:id', requireAuth, async (req, res) => {
   if (!row) return res.status(404).end()
   if (!inScope(req.user.root_path || '', row.folder)) return res.status(403).end()
   const abs = path.join(PHOTOS_ROOT, row.path)
+  console.log('[thumb] request for id:', id, 'path:', row.path)
   const thumb = await ensureThumb(abs)
-  if (!thumb) return res.status(500).end()
+  if (!thumb) {
+    console.error('[thumb] thumb failed for:', abs)
+    return res.status(500).end()
+  }
   res.setHeader('content-type', 'image/webp')
   fs.createReadStream(thumb).pipe(res)
 })
@@ -1137,15 +1176,23 @@ app.get('/view/:id', requireAuth, async (req, res) => {
   if (!row) return res.status(404).end()
   if (!inScope(req.user.root_path || '', row.folder)) return res.status(403).end()
   const abs = path.join(PHOTOS_ROOT, row.path)
+  console.log('[view] request for id:', id, 'path:', row.path, 'kind:', row.kind)
+  
   if (row.kind === 'video') {
     // For videos, return poster image (thumb) as a view placeholder
     const thumb = await ensureThumb(abs)
-    if (!thumb) return res.status(500).end()
+    if (!thumb) {
+      console.error('[view] thumb failed for video:', abs)
+      return res.status(500).end()
+    }
     res.setHeader('content-type', 'image/webp')
     fs.createReadStream(thumb).pipe(res)
   } else {
     const view = await ensureView(abs)
-    if (!view) return res.status(500).end()
+    if (!view) {
+      console.error('[view] view failed for image:', abs)
+      return res.status(500).end()
+    }
     res.setHeader('content-type', 'image/webp')
     fs.createReadStream(view).pipe(res)
   }
