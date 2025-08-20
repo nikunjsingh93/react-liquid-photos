@@ -1108,6 +1108,15 @@ app.post('/api/index/cancel', requireAdmin, (_req, res) => {
   res.json({ ok: true, running: true, canceled: true })
 })
 
+/* index status: admin only */
+app.get('/api/index/status', requireAdmin, (_req, res) => {
+  res.json({ 
+    running: currentIndexJob.running, 
+    canceled: currentIndexJob.cancel,
+    token: currentIndexJob.token 
+  })
+})
+
 /* media endpoints: auth + scope check */
 app.get('/thumb/:id', requireAuth, async (req, res) => {
   const id = Number(req.params.id)

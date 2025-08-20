@@ -53,6 +53,8 @@ const API = {
     (await fetch(apiUrl('/api/index'), { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) })).json(),
   cancelScan: async () =>
     (await fetch(apiUrl('/api/index/cancel'), { method: 'POST', credentials: 'include' })).json(),
+  scanStatus: async () =>
+    (await fetch(apiUrl('/api/index/status'), { credentials: 'include' })).json(),
 }
 
 /* ----- UI helpers ----- */
@@ -275,6 +277,7 @@ export default function App() {
   const [scanSelectedPath, setScanSelectedPath] = useState('')
   const [scanMenuAnchor, setScanMenuAnchor] = useState('') // 'sidebar' | 'header' | ''
   const [scanTree, setScanTree] = useState(null)
+  const [scanJobToken, setScanJobToken] = useState(null)
 
   const loadScanTree = useCallback(async () => {
     try {
@@ -313,7 +316,29 @@ export default function App() {
     })()
   }, [])
 
-
+  // Poll scan status when we have a job token
+  useEffect(() => {
+    if (!scanJobToken || !user?.is_admin) return
+    
+    const interval = setInterval(async () => {
+      try {
+        const status = await API.scanStatus()
+        if (!status.running) {
+          setScanning(false)
+          setScanJobToken(null)
+          // Refresh tree after scan completes
+          const t = await API.tree(treeMode, mediaFilter)
+          setTree(t)
+        }
+      } catch {
+        // If status check fails, assume scan is done
+        setScanning(false)
+        setScanJobToken(null)
+      }
+    }, 2000) // Check every 2 seconds
+    
+    return () => clearInterval(interval)
+  }, [scanJobToken, user?.is_admin, treeMode, mediaFilter])
 
   const toggle = useCallback((p) => {
     setOpen(prev => {
@@ -609,11 +634,16 @@ export default function App() {
                             if (scanning) return
                             setScanning(true)
                             try {
-                              await API.rescan()
-                              const t = await API.tree(treeMode, mediaFilter)
-                              setTree(t); setOpen(new Set([t.path])); setSelected(t.path); setDateRange({ from: 0, to: 0 })
-                            } catch {}
-                            setScanning(false)
+                              const result = await API.rescan()
+                              if (result?.ok) {
+                                // Start polling for status
+                                setScanJobToken(Date.now())
+                              } else {
+                                setScanning(false)
+                              }
+                            } catch {
+                              setScanning(false)
+                            }
                           }}
                           title="Full Rescan"
                         >
@@ -1005,11 +1035,16 @@ export default function App() {
                             if (scanning) return
                             setScanning(true)
                             try {
-                              await API.rescan()
-                              const t = await API.tree(treeMode, mediaFilter)
-                              setTree(t); setOpen(new Set([t.path])); setSelected(t.path); setDateRange({ from: 0, to: 0 })
-                            } catch {}
-                            setScanning(false)
+                              const result = await API.rescan()
+                              if (result?.ok) {
+                                // Start polling for status
+                                setScanJobToken(Date.now())
+                              } else {
+                                setScanning(false)
+                              }
+                            } catch {
+                              setScanning(false)
+                            }
                           }}
                           title="Full Rescan"
                         >
@@ -1061,14 +1096,17 @@ export default function App() {
                               setScanning(true)
                               try {
                                 const r = await API.rescanPath(scanSelectedPath)
-                                if (!r?.ok) throw new Error(r?.error || 'Scan failed')
-                                const t = await API.tree(treeMode, mediaFilter)
-                                setTree(t)
-                                setSelected(scanSelectedPath)
-                                setOpen(prev => new Set(prev).add(scanSelectedPath))
-                              } catch {}
-                              setScanning(false)
-                              setScanMenuOpen(false)
+                                if (r?.ok) {
+                                  // Start polling for status
+                                  setScanJobToken(Date.now())
+                                } else {
+                                  setScanning(false)
+                                  setScanMenuOpen(false)
+                                }
+                              } catch {
+                                setScanning(false)
+                                setScanMenuOpen(false)
+                              }
                             }}
                           >
                             Scan Now
