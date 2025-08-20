@@ -75,8 +75,8 @@ function isRawName(name) {
 }
 
 /* Scrollable tree ONLY (header label + tree) */
-function SidebarTreeContent({ tree, open, toggle, select, selected, mode = 'folders', onToggleMode, showHeader = true }) {
-  if (!tree) return null
+function SidebarTreeContent({ tree, open, toggle, select, selected, mode = 'folders', onToggleMode, showHeader = true, loading = false }) {
+  if (!tree && !loading) return null
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-2 pr-1" style={{ WebkitOverflowScrolling: 'touch' }}>
       {showHeader && (
@@ -88,17 +88,28 @@ function SidebarTreeContent({ tree, open, toggle, select, selected, mode = 'fold
               className={`text-xs px-2 py-0.5 rounded ${mode === 'folders' ? 'bg-white/20' : 'bg-white/10'} border border-white/10`}
               onClick={() => onToggleMode && onToggleMode('folders')}
               title="Browse by folders"
+              disabled={loading}
             >Folders</button>
             <button
               className={`text-xs px-2 py-0.5 rounded ${mode === 'dates' ? 'bg-white/20' : 'bg-white/10'} border border-white/10`}
               onClick={() => onToggleMode && onToggleMode('dates')}
               title="Browse by dates"
+              disabled={loading}
             >Dates</button>
           </div>
         </div>
       )}
       <div className="overflow-y-auto" style={{ height: showHeader ? 'calc(100% - 40px)' : '100%' }}>
-        <TreeNode node={tree} depth={0} open={open} toggle={toggle} select={select} selected={selected} />
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <div className="flex items-center gap-2 text-slate-400">
+              <div className="w-4 h-4 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div>
+              <span className="text-sm">Loading tree...</span>
+            </div>
+          </div>
+        ) : (
+          <TreeNode node={tree} depth={0} open={open} toggle={toggle} select={select} selected={selected} />
+        )}
       </div>
     </div>
   )
@@ -219,6 +230,45 @@ function formatDayHeader(mtime) {
 const HEADER_H = 56
 const MOBILE_INFO_VH = 40
 
+/* ----- Thumbnail Component ----- */
+function Thumbnail({ id, fname, loadedThumbnails, setLoadedThumbnails }) {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
+  
+  const handleLoad = () => {
+    setLoading(false)
+    setLoadedThumbnails(prev => new Set(prev).add(id))
+  }
+  
+  const handleError = () => {
+    setLoading(false)
+    setError(true)
+  }
+  
+  return (
+    <div className="relative h-full w-full">
+      {loading && (
+        <div className="absolute inset-0 bg-zinc-800 animate-pulse flex items-center justify-center">
+          <div className="w-6 h-6 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div>
+        </div>
+      )}
+      {error && (
+        <div className="absolute inset-0 bg-zinc-800 flex items-center justify-center">
+          <div className="text-slate-400 text-xs">Failed to load</div>
+        </div>
+      )}
+      <img
+        src={apiUrl(`/thumb/${id}`)}
+        alt={fname}
+        loading="lazy"
+        className={`h-full w-full object-cover transition-opacity duration-200 ${loading ? 'opacity-0' : 'opacity-100'}`}
+        onLoad={handleLoad}
+        onError={handleError}
+      />
+    </div>
+  )
+}
+
 /* ----- App ----- */
 export default function App() {
   // media first (used to set initial sidebar state)
@@ -244,6 +294,7 @@ export default function App() {
   const [selected, setSelected] = useState('')
   const [treeMode, setTreeMode] = useState('folders')
   const [dateRange, setDateRange] = useState({ from: 0, to: 0 })
+  const [treeLoading, setTreeLoading] = useState(false)
 
   // Photos & paging
   const [photos, setPhotos] = useState([])
@@ -279,6 +330,9 @@ export default function App() {
   const [scanMenuAnchor, setScanMenuAnchor] = useState('') // 'sidebar' | 'header' | ''
   const [scanTree, setScanTree] = useState(null)
   const [scanJobToken, setScanJobToken] = useState(null)
+
+  // Thumbnail loading states
+  const [loadedThumbnails, setLoadedThumbnails] = useState(new Set())
 
   const loadScanTree = useCallback(async () => {
     try {
@@ -341,6 +395,7 @@ export default function App() {
             setHasMore(true)
             setTotal(0)
             setInitialLoaded(false)
+            setLoadedThumbnails(new Set())
           } catch (e) {
             console.error('Failed to refresh tree after scan:', e)
           }
@@ -397,6 +452,7 @@ export default function App() {
         setTotal(0)
         setSelectMode(false)
         setSelectedIds(new Set())
+        setLoadedThumbnails(new Set())
       }
 
       if (inFlightRef.current) return
@@ -723,6 +779,7 @@ export default function App() {
                                 setHasMore(true)
                                 setTotal(0)
                                 setInitialLoaded(false)
+                                setLoadedThumbnails(new Set())
                               } catch {}
                               setScanning(false)
                               setScanMenuOpen(false)
@@ -767,9 +824,11 @@ export default function App() {
                  }}
                  selected={selected}
                  mode={treeMode}
+                 loading={treeLoading}
                  onToggleMode={async (nextMode) => {
                    if (nextMode === treeMode) return
                    setTreeMode(nextMode)
+                   setTreeLoading(true)
                    // Force complete refresh when switching modes to ensure clean state
                    try {
                      const t = await API.tree(nextMode, mediaFilter)
@@ -784,8 +843,11 @@ export default function App() {
                      setHasMore(true)
                      setTotal(0)
                      setInitialLoaded(false)
+                     setLoadedThumbnails(new Set())
                    } catch (e) {
                      console.error('Failed to refresh tree when switching modes:', e)
+                   } finally {
+                     setTreeLoading(false)
                    }
                  }}
                />
@@ -880,6 +942,7 @@ export default function App() {
                         setHasMore(true)
                         setTotal(0)
                         setInitialLoaded(false)
+                        setLoadedThumbnails(new Set())
                       } catch (e) {
                         console.error('Failed to refresh tree when changing media filter:', e)
                       }
@@ -1005,11 +1068,11 @@ export default function App() {
                         className={`group relative aspect-[4/3] overflow-hidden bg-white/5 ${isSel ? 'ring-2 ring-sky-400/60' : ''} hover:scale-[1.01] transition`}
                         onClick={() => onTileClick(p.id, i)}
                       >
-                        <img
-                          src={apiUrl(`/thumb/${p.id}`)}
-                          alt={p.fname}
-                          loading="lazy"
-                          className="h-full w-full object-cover"
+                        <Thumbnail
+                          id={p.id}
+                          fname={p.fname}
+                          loadedThumbnails={loadedThumbnails}
+                          setLoadedThumbnails={setLoadedThumbnails}
                         />
                         {isRaw && (
                           <div className="absolute left-1 top-1 bg-black/60 text-white text-[7px] px-1.5 py-0.5 rounded">
@@ -1194,9 +1257,11 @@ export default function App() {
               }}
               selected={selected}
               mode={treeMode}
+              loading={treeLoading}
               onToggleMode={async (nextMode) => {
                 if (nextMode === treeMode) return
                 setTreeMode(nextMode)
+                setTreeLoading(true)
                 // Force complete refresh when switching modes to ensure clean state
                 try {
                   const t = await API.tree(nextMode, mediaFilter)
@@ -1211,8 +1276,11 @@ export default function App() {
                   setHasMore(true)
                   setTotal(0)
                   setInitialLoaded(false)
+                  setLoadedThumbnails(new Set())
                 } catch (e) {
                   console.error('Failed to refresh tree when switching modes:', e)
+                } finally {
+                  setTreeLoading(false)
                 }
               }}
             />
