@@ -134,10 +134,10 @@ docker run -d \
   -p 6363:6363 \
   -e HOST=0.0.0.0 \
   -e PORT=6363 \
-  -e ADMIN_USER=admin \
-  -e ADMIN_PASS=admin123 \
-  -v "/home/youruser/Pictures":/pictures:ro \
-  -v "/home/youruser/.liquid-photos-cache":/app/.cache \
+  -e ADMIN_USER=admin \ # <— change this to your admin user
+  -e ADMIN_PASS=admin123 \ # <— change this to your admin pass
+  -v "/home/youruser/Pictures":/pictures:ro \ # <— change this to your Pictures/Videos folder
+  -v "/home/youruser/.liquid-photos-cache":/app/.cache \ # <— change this to your preferred cache folder for thumbnails/DB
   nikunjsingh/liquid-photos:latest
 ```
 
