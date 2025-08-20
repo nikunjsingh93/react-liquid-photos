@@ -1,77 +1,176 @@
 # Liquid Photos
 
-A fast, modern photo gallery application built with React and Node.js.
+A fast, modern photo and video gallery application built with React and Node.js.
 
 ## Features
 
 - **Fast Image Loading**: Optimized image serving with multiple resolution levels
 - **Responsive Design**: Works seamlessly on desktop and mobile devices
 - **User Authentication**: Secure login system with user management
-- **Folder Navigation**: Browse photos organized in folders
+- **Folder Navigation**: Browse media organized in folders
 - **Full-Screen Viewer**: High-quality image viewing with optimization options
 - **Download Support**: Download original quality images
+- **Video Playback (HLS)**: Built-in player with HLS streaming for smooth video playback
+- **Admin Tools**:
+  - "Scan Media" menu with **Full Rescan** and **Scan Path** (admin-only)
+  - Create users with an **Admin** toggle
+  - Default admin from env (`ADMIN_USER`) cannot be deleted; other admins can
+  - Optional per-user library scope via `root_path`
 
-## Image Optimization
+## Image & Video Optimization
 
-The application now includes intelligent image optimization to improve loading times, especially when accessing photos outside your home network:
+The application includes intelligent optimization to improve loading times, especially when accessing your library remotely.
 
 ### Resolution Levels
 
-1. **Thumbnails** (`/thumb/:id`): Small WebP images (512px width) for grid view
-2. **Optimized View** (`/view/:id`): Medium-resolution WebP images (1920px width) for full-screen viewing
-3. **Full Resolution** (`/media/:id`): Original images for high-quality viewing
-4. **Download** (`/download/:id`): Original images for download
+1. **Thumbnails** (`/thumb/:id`): Small WebP images (default width 512px) for grid view
+2. **Optimized View** (`/view/:id`): Medium-resolution WebP images (default width 1920px) for full-screen viewing
+3. **Full Resolution** (`/media/:id`): Original media for high-quality viewing
+4. **Download** (`/download/:id`): Original media for download
 
 ### Viewer Controls
 
 - **Optimized Mode** (default): Fast loading with good quality for most viewing needs
 - **Full Resolution Mode**: Toggle to view original quality images when needed
-- **Download Button**: Always downloads the original full-quality image
+- **Download Button**: Always downloads the original full-quality file
 
 ### Configuration
 
-You can customize the optimization settings using environment variables:
+You can customize optimization settings using environment variables:
 
 ```bash
-# Thumbnail width (default: 512px)
+# Thumbnail width (default: 512)
 THUMB_WIDTH=512
 
-# Optimized view width (default: 1920px)
+# Optimized view width (default: 1920)
 VIEW_WIDTH=1920
-
-# WebP quality for thumbnails (default: 82)
-# WebP quality for optimized views (default: 85)
 ```
 
-## Getting Started
+## Admin: Scan Media
+
+- **Full Rescan**: Re-index the entire library
+- **Scan Path**: Re-index only a selected folder path (useful after adding/renaming a folder)
+- Renamed folders: scanning now prunes stale entries so only the new folder name is shown
+- "Scan Media" controls are visible to admins only
+
+## System Dependencies
+
+Install these on the host (for Docker images, they are included):
+
+- `ffmpeg` – video thumbnails and HLS support
+- `exiftool` – EXIF extraction and RAW preview
+- `libheif` / `heif-convert` – HEIC/HEIF preview (optional but recommended)
+
+## Development (local)
+
+Prerequisites:
+- Node.js 18+
+- pnpm or npm
+- The system dependencies listed above
 
 1. Install dependencies:
    ```bash
    npm install
    ```
 
-2. Set up environment variables:
+2. Set up environment variables (create a `.env` or export in your shell):
    ```bash
    # Required: Path to your photos directory
-   PHOTOS_PATH=/path/to/your/photos
-   
+   PHOTOS_PATH=/absolute/path/to/your/Pictures
+
    # Optional: Server configuration
-   PORT=5174
    HOST=0.0.0.0
+   PORT=6363
+
+   # Optional: live file watching (0/1); if enabled, changes are auto-indexed
+   WATCH_ENABLED=1
+
+   # Optional: initial admin (created only if no admin exists yet)
+   ADMIN_USER=admin
+   ADMIN_PASS=admin123
    ```
 
-3. Start the development server:
+3. Start the development servers (API + Vite):
    ```bash
    npm run dev
    ```
 
-4. Open your browser to `http://localhost:5173`
+4. Open `http://localhost:5173`
 
-## Performance Benefits
+## Docker
 
-- **Faster Initial Loading**: Optimized images load much faster than full-resolution images
-- **Reduced Bandwidth**: Significant bandwidth savings when viewing photos remotely
-- **Better User Experience**: Smooth navigation and quick image switching
-- **Flexible Quality**: Users can choose between speed and quality based on their needs
+The server expects your library to be mounted at `/pictures` inside the container (default if `PHOTOS_PATH` is not set). Cache and generated assets live in `/app/.cache`.
 
-The optimization is particularly beneficial when accessing photos over slower connections or when viewing on mobile devices with limited bandwidth.
+### Docker Compose
+
+Use home folders appropriate to your OS.
+
+```yaml
+a version: "3.8"
+services:
+  liquid-photos:
+    image: nikunjsingh/liquid-photos:latest
+    container_name: liquid-photos
+    restart: unless-stopped
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "6363"
+      ADMIN_USER: "admin"
+      ADMIN_PASS: "admin123"
+      # PHOTOS_PATH can be omitted (defaults to /pictures)
+    ports:
+      - "6363:6363"
+    volumes:
+      # Linux (example)
+      - /home/youruser/Pictures:/pictures:ro
+      - /home/youruser/.liquid-photos-cache:/app/.cache
+      # macOS (example)
+      # - /Users/youruser/Pictures:/pictures:ro
+      # - /Users/youruser/.liquid-photos-cache:/app/.cache
+      # Windows (example; Docker Desktop)
+      # - C:/Users/youruser/Pictures:/pictures:ro
+      # - C:/Users/youruser/.liquid-photos-cache:/app/.cache
+```
+
+Start with:
+```bash
+docker compose up -d
+```
+
+### Docker Run
+
+Linux/macOS example:
+```bash
+docker run -d \
+  --name liquid-photos \
+  --restart unless-stopped \
+  -p 6363:6363 \
+  -e HOST=0.0.0.0 \
+  -e PORT=6363 \
+  -e ADMIN_USER=admin \
+  -e ADMIN_PASS=admin123 \
+  -v "/home/youruser/Pictures":/pictures:ro \
+  -v "/home/youruser/.liquid-photos-cache":/app/.cache \
+  nikunjsingh/liquid-photos:latest
+```
+
+Windows (PowerShell) example:
+```powershell
+docker run -d `
+  --name liquid-photos `
+  --restart unless-stopped `
+  -p 6363:6363 `
+  -e HOST=0.0.0.0 `
+  -e PORT=6363 `
+  -e ADMIN_USER=admin `
+  -e ADMIN_PASS=admin123 `
+  -v "C:/Users/youruser/Pictures:/pictures:ro" `
+  -v "C:/Users/youruser/.liquid-photos-cache:/app/.cache" `
+  nikunjsingh/liquid-photos:latest
+```
+
+## Notes
+
+- On first run, if no admin exists, a default admin is created from `ADMIN_USER`/`ADMIN_PASS`. That specific admin cannot be deleted.
+- For Docker, ensure Docker Desktop (macOS/Windows) has access to your host folders.
+- When using **Scan Path** after renames, stale entries under the scanned (or nearest existing parent) directory are pruned so only the new folder name remains.
