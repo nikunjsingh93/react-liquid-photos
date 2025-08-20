@@ -11,11 +11,40 @@ A fast, modern photo and video gallery application built with React and Node.js.
 - **Full-Screen Viewer**: High-quality image viewing with optimization options
 - **Download Support**: Download original quality images
 - **Video Playback (HLS)**: Built-in player with HLS streaming for smooth video playback
+- **Touch Gestures**: Intuitive swipe controls for mobile devices
+- **Loading States**: Smooth loading indicators for thumbnails and navigation
+- **Multi-Select**: Select multiple photos for batch download
 - **Admin Tools**:
   - "Scan Media" menu with **Full Rescan** and **Scan Path** (admin-only)
   - Create users with an **Admin** toggle
   - Default admin from env (`ADMIN_USER`) cannot be deleted; other admins can
   - Optional per-user library scope via `root_path`
+
+## Touch Interactions
+
+Liquid Photos provides intuitive touch gestures for mobile devices, making it easy to navigate and interact with your media library.
+
+### Full-Screen Viewer Gestures
+
+- **Swipe Left/Right**: Navigate between photos
+  - Swipe left to go to the next photo
+  - Swipe right to go to the previous photo
+  - Works anywhere in the full-screen viewer area
+
+- **Swipe Up**: Open the information panel
+  - Shows EXIF data, file details, and metadata
+  - Works from any position in the viewer
+
+- **Swipe Down**: Close panels or exit viewer
+  - If info panel is open: closes the info panel
+  - If info panel is closed: exits the full-screen viewer
+
+### Grid View Interactions
+
+- **Tap**: Open photo in full-screen viewer
+- **Long Press**: Enter multi-select mode (mobile)
+- **Multi-select**: Tap photos to select multiple items for batch download
+- **Responsive Design**: Optimized for both portrait and landscape orientations
 
 ## Image & Video Optimization
 
@@ -33,6 +62,12 @@ The application includes intelligent optimization to improve loading times, espe
 - **Optimized Mode** (default): Fast loading with good quality for most viewing needs
 - **Full Resolution Mode**: Toggle to view original quality images when needed
 - **Download Button**: Always downloads the original full-quality file
+
+### Loading States
+
+- **Thumbnail Loading**: Smooth skeleton loading with spinners while thumbnails load
+- **Tree Navigation**: Loading indicators when switching between folder and date views
+- **Error Handling**: Graceful fallbacks for failed image loads
 
 ## Admin: Scan Media
 
