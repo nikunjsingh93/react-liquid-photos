@@ -590,10 +590,10 @@ export default function App() {
                  <>
                    <button
                      className="ml-auto inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg border border-white/10 bg-white/10 hover:bg-white/15"
-                     title="Scan"
+                     title="Scan Media"
                      onClick={async () => { setScanMenuAnchor('sidebar'); setScanMenuOpen(v => !v); if (!scanTree) await loadScanTree() }}
                    >
-                     Scan
+                     Scan Media
                    </button>
                    {scanMenuOpen && scanMenuAnchor === 'sidebar' && (
                     <div className="fixed left-1/2 -translate-x-1/2 top-[72px] z-[1000] w-[90vw] max-w-[520px] max-h-[70vh] rounded-lg border border-white/10 bg-zinc-950 shadow-2xl">
@@ -972,10 +972,10 @@ export default function App() {
                 <div className="relative ml-auto">
                   <button
                     className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg border border-white/10 bg-white/10 hover:bg-white/15"
-                    title="Scan"
+                    title="Scan Media"
                     onClick={() => { setScanMenuAnchor('sidebar'); setScanMenuOpen(v => !v) }}
                   >
-                    Scan
+                    Scan Media
                   </button>
                   {scanMenuOpen && scanMenuAnchor === 'sidebar' && (
                     <div className="fixed left-1/2 -translate-x-1/2 top-[64px] z-[1000] w-[90vw] max-w-[340px] max-h-[70vh] rounded-lg border border-white/10 bg-zinc-950 shadow-2xl">
