@@ -326,9 +326,23 @@ export default function App() {
         if (!status.running) {
           setScanning(false)
           setScanJobToken(null)
-          // Refresh tree after scan completes
-          const t = await API.tree(treeMode, mediaFilter)
-          setTree(t)
+          // Force complete refresh of tree after scan completes
+          try {
+            const t = await API.tree(treeMode, mediaFilter)
+            setTree(t)
+            // Reset selection to root and clear any cached state
+            setOpen(new Set([t.path]))
+            setSelected(t.path)
+            // Clear photo cache to force fresh load
+            photoIdsRef.current = new Set()
+            setPhotos([])
+            setPage(1)
+            setHasMore(true)
+            setTotal(0)
+            setInitialLoaded(false)
+          } catch (e) {
+            console.error('Failed to refresh tree after scan:', e)
+          }
         }
       } catch {
         // If status check fails, assume scan is done
@@ -696,10 +710,18 @@ export default function App() {
                               try {
                                 const r = await API.rescanPath(scanSelectedPath)
                                 if (!r?.ok) throw new Error(r?.error || 'Scan failed')
+                                // Force complete refresh of tree after path scan
                                 const t = await API.tree(treeMode, mediaFilter)
                                 setTree(t)
                                 setSelected(scanSelectedPath)
                                 setOpen(prev => new Set(prev).add(scanSelectedPath))
+                                // Clear photo cache to force fresh load
+                                photoIdsRef.current = new Set()
+                                setPhotos([])
+                                setPage(1)
+                                setHasMore(true)
+                                setTotal(0)
+                                setInitialLoaded(false)
                               } catch {}
                               setScanning(false)
                               setScanMenuOpen(false)
@@ -747,11 +769,23 @@ export default function App() {
                  onToggleMode={async (nextMode) => {
                    if (nextMode === treeMode) return
                    setTreeMode(nextMode)
-                   const t = await API.tree(nextMode, mediaFilter)
-                   setTree(t)
-                   setOpen(new Set([t.path]))
-                   setSelected(t.path)
-                   setDateRange({ from: 0, to: 0 })
+                   // Force complete refresh when switching modes to ensure clean state
+                   try {
+                     const t = await API.tree(nextMode, mediaFilter)
+                     setTree(t)
+                     setOpen(new Set([t.path]))
+                     setSelected(t.path)
+                     setDateRange({ from: 0, to: 0 })
+                     // Clear photo cache to force fresh load
+                     photoIdsRef.current = new Set()
+                     setPhotos([])
+                     setPage(1)
+                     setHasMore(true)
+                     setTotal(0)
+                     setInitialLoaded(false)
+                   } catch (e) {
+                     console.error('Failed to refresh tree when switching modes:', e)
+                   }
                  }}
                />
 
@@ -831,13 +865,23 @@ export default function App() {
                     onChange={async (e) => {
                       const val = e.target.value
                       setMediaFilter(val)
-                      // refresh tree counts for current mode using selected filter
+                      // Force complete refresh when changing media filter
                       try {
                         const t = await API.tree(treeMode, val)
                         setTree(t)
-                        // keep current selection if still present; otherwise reset to root
+                        // Reset to root and clear any cached state
                         setOpen(new Set([t.path]))
-                      } catch {}
+                        setSelected(t.path)
+                        // Clear photo cache to force fresh load
+                        photoIdsRef.current = new Set()
+                        setPhotos([])
+                        setPage(1)
+                        setHasMore(true)
+                        setTotal(0)
+                        setInitialLoaded(false)
+                      } catch (e) {
+                        console.error('Failed to refresh tree when changing media filter:', e)
+                      }
                     }}
                     title="Filter media type"
                   >
@@ -1152,11 +1196,23 @@ export default function App() {
               onToggleMode={async (nextMode) => {
                 if (nextMode === treeMode) return
                 setTreeMode(nextMode)
-                const t = await API.tree(nextMode, mediaFilter)
-                setTree(t)
-                setOpen(new Set([t.path]))
-                setSelected(t.path)
-                setDateRange({ from: 0, to: 0 })
+                // Force complete refresh when switching modes to ensure clean state
+                try {
+                  const t = await API.tree(nextMode, mediaFilter)
+                  setTree(t)
+                  setOpen(new Set([t.path]))
+                  setSelected(t.path)
+                  setDateRange({ from: 0, to: 0 })
+                  // Clear photo cache to force fresh load
+                  photoIdsRef.current = new Set()
+                  setPhotos([])
+                  setPage(1)
+                  setHasMore(true)
+                  setTotal(0)
+                  setInitialLoaded(false)
+                } catch (e) {
+                  console.error('Failed to refresh tree when switching modes:', e)
+                }
               }}
             />
 
