@@ -571,23 +571,25 @@ export default function App() {
                <div className="shrink-0 flex items-center gap-2 p-3 border-b border-white/10">
                  <ImageIcon className="w-5 h-5 text-slate-200" />
                  <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
-                 <button
-                   className={`ml-auto inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg border border-white/10 ${scanning ? 'bg-white/20' : 'bg-white/10 hover:bg-white/15'}`}
-                   disabled={scanning}
-                   onClick={async () => {
-                     if (scanning) return
-                     setScanning(true)
-                     try {
-                       await API.rescan()
-                       const t = await API.tree(treeMode, mediaFilter)
-                       setTree(t); setOpen(new Set([t.path])); setSelected(t.path); setDateRange({ from: 0, to: 0 })
-                     } catch {}
-                     setScanning(false)
-                   }}
-                   title="Rescan Library"
-                 >
-                   <RefreshCcw className={`w-4 h-4 ${scanning ? 'animate-spin' : ''}`} /> {scanning ? 'Scanning' : 'Rescan'}
-                 </button>
+                 {user?.is_admin && (
+                   <button
+                     className={`ml-auto inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg border border-white/10 ${scanning ? 'bg-white/20' : 'bg-white/10 hover:bg-white/15'}`}
+                     disabled={scanning}
+                     onClick={async () => {
+                       if (scanning) return
+                       setScanning(true)
+                       try {
+                         await API.rescan()
+                         const t = await API.tree(treeMode, mediaFilter)
+                         setTree(t); setOpen(new Set([t.path])); setSelected(t.path); setDateRange({ from: 0, to: 0 })
+                       } catch {}
+                       setScanning(false)
+                     }}
+                     title="Rescan Library"
+                   >
+                     <RefreshCcw className={`w-4 h-4 ${scanning ? 'animate-spin' : ''}`} /> {scanning ? 'Scanning' : 'Rescan'}
+                   </button>
+                 )}
                </div>
 
                {/* Scrollable tree in the middle */}
@@ -1070,7 +1072,7 @@ function AdminPanel({ user, onClose }) {
   const [list, setList] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [form, setForm] = useState({ username: '', password: '', path: '' })
+  const [form, setForm] = useState({ username: '', password: '', path: '', isAdmin: false })
   const [creating, setCreating] = useState(false)
   const [deletingId, setDeletingId] = useState(0)
 
@@ -1092,9 +1094,9 @@ function AdminPanel({ user, onClose }) {
     if (!form.username || !form.password) { setError('Username and password required'); return }
     setCreating(true); setError('')
     try {
-      const r = await API.adminCreateUser({ username: form.username, password: form.password, root_path: form.path })
+      const r = await API.adminCreateUser({ username: form.username, password: form.password, root_path: form.path, is_admin: !!form.isAdmin })
       if (!r?.ok) throw new Error(r?.error || 'Create failed')
-      setForm({ username: '', password: '', path: '' })
+      setForm({ username: '', password: '', path: '', isAdmin: false })
       await load()
       alert('User created')
     } catch (e) {
@@ -1147,6 +1149,10 @@ function AdminPanel({ user, onClose }) {
                 <label className="block text-xs text-slate-300 mb-1">Password</label>
                 <input type="password" className="w-full px-2 py-1.5 rounded bg-white/10 border border-white/10" value={form.password} onChange={e=>setForm(f=>({...f, password:e.target.value}))}/>
               </div>
+              <div className="flex items-center gap-2">
+                <input id="new-user-admin" type="checkbox" className="w-4 h-4" checked={!!form.isAdmin} onChange={e=>setForm(f=>({...f, isAdmin:e.target.checked}))} />
+                <label htmlFor="new-user-admin" className="text-xs text-slate-300 select-none">Admin</label>
+              </div>
               <div>
                 <label className="block text-xs text-slate-300 mb-1">Allowed Path (relative to library)</label>
                 <input placeholder="e.g. 2024/Trips/Paris" className="w-full px-2 py-1.5 rounded bg-white/10 border border-white/10" value={form.path} onChange={e=>setForm(f=>({...f, path:e.target.value}))}/>
@@ -1167,11 +1173,13 @@ function AdminPanel({ user, onClose }) {
               <div className="space-y-2 text-sm">
                 {list.map(u => {
                   const isSelf = u.id === user.id
+                  const isProtected = !!u.is_protected
                   return (
                     <div key={u.id} className="rounded border border-white/10 p-2">
                       <div className="flex items-center gap-2">
                         <div className="font-medium">{u.username}</div>
                         {u.is_admin ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300 border border-yellow-400/30">ADMIN</span> : null}
+                        {isProtected ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-400/30">DEFAULT</span> : null}
                         <div className="ml-auto text-xs text-slate-400">{new Date(u.created_at).toLocaleString()}</div>
                       </div>
                       <div className="mt-2 flex items-center gap-2">
@@ -1180,9 +1188,9 @@ function AdminPanel({ user, onClose }) {
                         </div>
                         <div className="ml-auto flex items-center gap-2">
                           <button
-                            className={`inline-flex items-center gap-1 px-2 py-1 rounded border ${isSelf ? 'opacity-40 cursor-not-allowed' : 'hover:bg-rose-500/15'} bg-rose-500/10 border-rose-500/30 text-rose-300`}
-                            title={isSelf ? 'You cannot delete your own account' : 'Delete user'}
-                            disabled={isSelf || deletingId === u.id}
+                            className={`inline-flex items-center gap-1 px-2 py-1 rounded border ${isSelf || isProtected ? 'opacity-40 cursor-not-allowed' : 'hover:bg-rose-500/15'} bg-rose-500/10 border-rose-500/30 text-rose-300`}
+                            title={isProtected ? 'Default admin cannot be deleted' : (isSelf ? 'You cannot delete your own account' : 'Delete user')}
+                            disabled={isSelf || isProtected || deletingId === u.id}
                             onClick={() => deleteUser(u.id, u.username)}
                           >
                             <Trash2 className="w-4 h-4" />

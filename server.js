@@ -630,6 +630,7 @@ function ensureAdmin() {
   insertUser.run(ADMIN_USER, pass_hash, 1, null, nowMs())
   console.log(`[auth] created default admin '${ADMIN_USER}'`)
 }
+const DEFAULT_ADMIN_USERNAME = (process.env.ADMIN_USER || 'admin').trim()
 ensureAdmin()
 
 /* ---------- app ---------- */
@@ -737,7 +738,8 @@ function requireAdmin(req, res, next) {
 /* admin routes */
 app.get('/api/admin/users', requireAdmin, (_req, res) => {
   const rows = db.prepare(`SELECT id, username, is_admin, COALESCE(root_path,'') as root_path, created_at FROM users ORDER BY id ASC`).all()
-  res.json({ items: rows })
+  const items = rows.map(r => ({ ...r, is_protected: r.username === DEFAULT_ADMIN_USERNAME }))
+  res.json({ items })
 })
 app.post('/api/admin/users', requireAdmin, (req, res) => {
   const { username, password, root_path } = req.body || {}
@@ -746,7 +748,8 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
   try { scoped = normalizeScopeInput(root_path || '') } catch (e) { return res.status(400).json({ error: e.message }) }
   const pass_hash = hashPassword(String(password))
   try {
-    const info = insertUser.run(String(username).trim(), pass_hash, 0, scoped || null, nowMs())
+    const is_admin = req.body && req.body.is_admin ? 1 : 0
+    const info = insertUser.run(String(username).trim(), pass_hash, is_admin, scoped || null, nowMs())
     res.json({ ok: true, id: info.lastInsertRowid })
   } catch (e) {
     if (String(e.message).includes('UNIQUE')) return res.status(409).json({ error: 'username exists' })
@@ -1363,6 +1366,9 @@ app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
   const id = Number(req.params.id)
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
   if (req.user?.id === id) return res.status(400).json({ error: 'cannot delete your own account' })
+  const found = db.prepare('SELECT id, username FROM users WHERE id = ?').get(id)
+  if (!found) return res.status(404).json({ error: 'not found' })
+  if (found.username === DEFAULT_ADMIN_USERNAME) return res.status(400).json({ error: 'cannot delete the default admin' })
   try {
     const stmt = db.prepare('DELETE FROM users WHERE id = ?')
     const info = stmt.run(id)
