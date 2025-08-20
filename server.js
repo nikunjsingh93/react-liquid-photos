@@ -628,6 +628,17 @@ function buildTreeForScope(scopePath, filter = 'all') {
 
   const sortRec = (n) => { n.children.sort((a,b)=>a.name.localeCompare(b.name)); n.children.forEach(sortRec) }
   sortRec(root)
+  
+  // Clean up empty nodes
+  const cleanupEmpty = (node) => {
+    if (!node.children) return
+    node.children = node.children.filter(child => {
+      cleanupEmpty(child)
+      return child.count > 0 || (child.children && child.children.length > 0)
+    })
+  }
+  cleanupEmpty(root)
+  
   return root
 }
 
@@ -931,6 +942,17 @@ function buildDateTreeForScope(scopePath, filter = 'all') {
     n.children.forEach(sortRec)
   }
   sortRec(root)
+  
+  // Clean up empty nodes
+  const cleanupEmpty = (node) => {
+    if (!node.children) return
+    node.children = node.children.filter(child => {
+      cleanupEmpty(child)
+      return child.count > 0 || (child.children && child.children.length > 0)
+    })
+  }
+  cleanupEmpty(root)
+  
   root.count = root.children.reduce((a, y) => a + (y.count || 0), 0)
   return root
 }
