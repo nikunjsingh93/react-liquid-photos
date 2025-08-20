@@ -156,6 +156,16 @@ ensureColumn('images', 'kind TEXT NOT NULL DEFAULT "image"', 'kind')
 ensureColumn('images', 'duration INTEGER NOT NULL DEFAULT 0', 'duration')
 
 /* ---------- indexer ---------- */
+let currentIndexJob = { token: 0, cancel: false, running: false }
+function beginIndexJob() {
+  if (currentIndexJob.running) return null
+  currentIndexJob = { token: Date.now(), cancel: false, running: true }
+  return currentIndexJob
+}
+function endIndexJob(job) {
+  if (job && currentIndexJob.token === job.token) currentIndexJob.running = false
+}
+
 const insertStmt = db.prepare(`INSERT INTO images(path, fname, folder, ctime, mtime, size, kind, duration)
   VALUES(?,?,?,?,?,?,?,?)
   ON CONFLICT(path) DO UPDATE SET
@@ -271,7 +281,7 @@ async function ensureHeicDecodedPreview(absPath) {
   })
 }
 
-async function scanAndIndex() {
+async function scanAndIndex(job = currentIndexJob) {
   console.log('[index] scanning…')
   const t0 = Date.now()
   const entries = await fg(['**/*'], {
@@ -283,6 +293,7 @@ async function scanAndIndex() {
   const ops = []
   const scannedPaths = new Set()
   for (const abs of entries) {
+    if (job?.cancel) break
     const ext = path.extname(abs).toLowerCase()
     const isImage = IMG_EXT.has(ext)
     const isVideo = VIDEO_EXT.has(ext)
@@ -318,10 +329,10 @@ async function scanAndIndex() {
     if (delOps.length) tx(delOps)
   } catch {}
 
-  console.log(`[index] done: ${count.toLocaleString()} files in ${((Date.now()-t0)/1000).toFixed(1)}s`)
+  console.log(`[index] done: ${count.toLocaleString()} files in ${((Date.now()-t0)/1000).toFixed(1)}s${job?.cancel ? ' (canceled)' : ''}`)
 }
 
-async function scanAndIndexUnder(relPrefix) {
+async function scanAndIndexUnder(relPrefix, job = currentIndexJob) {
   const prefix = normalizeScopeInput(relPrefix || '')
   if (!prefix) return scanAndIndex()
 
@@ -354,6 +365,7 @@ async function scanAndIndexUnder(relPrefix) {
   const ops = []
   const scannedPaths = new Set()
   for (const abs of entries) {
+    if (job?.cancel) break
     const ext = path.extname(abs).toLowerCase()
     const isImage = IMG_EXT.has(ext)
     const isVideo = VIDEO_EXT.has(ext)
@@ -391,7 +403,7 @@ async function scanAndIndexUnder(relPrefix) {
     if (delOps.length) tx(delOps)
   } catch {}
 
-  console.log(`[index] path done: ${count.toLocaleString()} files in ${((Date.now()-t0)/1000).toFixed(1)}s`)
+  console.log(`[index] path done: ${count.toLocaleString()} files in ${((Date.now()-t0)/1000).toFixed(1)}s${job?.cancel ? ' (canceled)' : ''}`)
 }
 
 async function ensureThumb(absPath) {
@@ -1053,11 +1065,25 @@ app.get('/api/photos', requireAuth, (req, res) => {
 
 /* rescan: admin only */
 app.post('/api/index', requireAdmin, async (req, res) => {
+  if (currentIndexJob.running) return res.status(409).json({ error: 'index already running' })
+  const job = beginIndexJob()
+  if (!job) return res.status(409).json({ error: 'index already running' })
   try {
     const p = (req.body && typeof req.body.path === 'string') ? req.body.path : ''
-    if (p) { await scanAndIndexUnder(p) } else { await scanAndIndex() }
-    res.json({ ok: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+    if (p) { await scanAndIndexUnder(p, job) } else { await scanAndIndex(job) }
+    res.json({ ok: true, canceled: !!job.cancel })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  } finally {
+    endIndexJob(job)
+  }
+})
+
+/* cancel index: admin only */
+app.post('/api/index/cancel', requireAdmin, (_req, res) => {
+  if (!currentIndexJob.running) return res.json({ ok: true, running: false })
+  currentIndexJob.cancel = true
+  res.json({ ok: true, running: true, canceled: true })
 })
 
 /* media endpoints: auth + scope check */
