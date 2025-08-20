@@ -94,7 +94,7 @@ The server expects your library to be mounted at `/pictures` inside the containe
 Use home folders appropriate to your OS.
 
 ```yaml
-a version: "3.8"
+version: "3.8"
 services:
   liquid-photos:
     image: nikunjsingh/liquid-photos:latest
