@@ -208,7 +208,8 @@ function formatDayHeader(mtime) {
       weekday: 'short',
       month: 'short',
       day: 'numeric',
-      year: 'numeric'
+      year: 'numeric',
+      timeZone: 'UTC'
     })
   } catch {
     // Fallback if locale formatting fails
@@ -982,7 +983,7 @@ export default function App() {
                   let lastDateKey = ''
                   for (let i = 0; i < photos.length; i++) {
                     const p = photos[i]
-                    const dateKey = new Date(Number(p.mtime)).toDateString()
+                    const dateKey = new Date(Number(p.mtime)).toLocaleDateString('en-US', { timeZone: 'UTC' })
                     if (dateKey !== lastDateKey) {
                       nodes.push(
                         <div

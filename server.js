@@ -922,7 +922,7 @@ function buildDateTreeForScope(scopePath, filter = 'all') {
     let mNode = ymMap.get(monthKey)
     if (!mNode) {
       const dateForName = new Date(Date.UTC(yearKey, r.m - 1, 1))
-      const monthName = dateForName.toLocaleString('en-US', { month: 'long' })
+      const monthName = dateForName.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' })
       mNode = { name: monthName, path: `date:M-${yearKey}-${String(r.m).padStart(2, '0')}`, count: 0, children: [] }
       ymMap.set(monthKey, mNode)
       yNode.children.push(mNode)
@@ -930,7 +930,7 @@ function buildDateTreeForScope(scopePath, filter = 'all') {
     mNode.count += r.c
 
     const dateForDay = new Date(Date.UTC(r.y, r.m - 1, r.d))
-    const weekday = dateForDay.toLocaleString('en-US', { weekday: 'short' })
+    const weekday = dateForDay.toLocaleString('en-US', { weekday: 'short', timeZone: 'UTC' })
     const dName = `${weekday}, ${r.d}`
     const dPath = `date:D-${r.y}-${String(r.m).padStart(2, '0')}-${String(r.d).padStart(2, '0')}`
     mNode.children.push({ name: dName, path: dPath, count: r.c, children: [] })
