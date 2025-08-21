@@ -12,7 +12,8 @@ export default defineConfig({
       '/view': 'http://localhost:5174',
       '/media': 'http://localhost:5174',
       '/download': 'http://localhost:5174',
-      '/hls': 'http://localhost:5174'
+      '/hls': 'http://localhost:5174',
+      '/s': 'http://localhost:5174'
     }    
   }
 })

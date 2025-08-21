@@ -135,6 +135,21 @@ CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 `)
 
+/* shares schema */
+db.exec(`
+CREATE TABLE IF NOT EXISTS shares (
+  id INTEGER PRIMARY KEY,
+  token     TEXT UNIQUE NOT NULL,
+  user_id   INTEGER NOT NULL,
+  folder    TEXT NOT NULL,
+  name      TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_shares_user ON shares(user_id);
+CREATE INDEX IF NOT EXISTS idx_shares_token ON shares(token);
+`)
+
 /* ---------- tiny migrations for old DBs ---------- */
 function getCols(table) {
   return db.prepare(`PRAGMA table_info(${table})`).all().map(r => r.name)
@@ -754,6 +769,11 @@ const deleteSession = db.prepare(`DELETE FROM sessions WHERE token = ?`)
 const getUserByUsername = db.prepare(`SELECT * FROM users WHERE username = ?`)
 const insertUser = db.prepare(`INSERT INTO users(username, pass_hash, is_admin, root_path, created_at) VALUES(?,?,?,?,?)`)
 const anyAdmin = db.prepare(`SELECT id FROM users WHERE is_admin = 1 LIMIT 1`)
+const insertShare = db.prepare(`INSERT INTO shares(token, user_id, folder, name, created_at) VALUES(?,?,?,?,?)`)
+const deleteShareStmt = db.prepare(`DELETE FROM shares WHERE id = ?`)
+const getShareById = db.prepare(`SELECT id, token, user_id, folder, name, created_at FROM shares WHERE id = ?`)
+const getShareByToken = db.prepare(`SELECT id, token, user_id, folder, name, created_at FROM shares WHERE token = ?`)
+const listSharesByUser = db.prepare(`SELECT id, token, user_id, folder, name, created_at FROM shares WHERE user_id = ? ORDER BY created_at DESC`)
 
 /* admin bootstrap */
 function normalizeScopeInput(input) {
@@ -1119,6 +1139,369 @@ app.get('/api/photos', requireAuth, (req, res) => {
     console.error('/api/photos error', e)
     res.status(500).json({ error: e.message })
   }
+})
+
+/* ---------- share endpoints (create/list/delete) ---------- */
+app.post('/api/shares', requireAuth, (req, res) => {
+  try {
+    const relFolder = String(req.body?.folder || '').trim()
+    if (!relFolder || relFolder.startsWith('date:')) return res.status(400).json({ error: 'invalid folder' })
+    const folder = scopeJoin(req.user.root_path || '', normalizeScopeInput(relFolder))
+    // Must be a prefix that exists in DB (optional check)
+    const lower = folder
+    const upper = folder + '\uFFFF'
+    const count = db.prepare('SELECT COUNT(1) as c FROM images WHERE folder >= ? AND folder < ?').get(lower, upper).c
+    if (count === 0) return res.status(404).json({ error: 'folder is empty or not found' })
+
+    const token = crypto.randomBytes(20).toString('hex')
+    const name = String(req.body?.name || path.basename(folder) || 'Shared').trim()
+    insertShare.run(token, req.user.id, folder, name, nowMs())
+    const urlPath = `/s/${token}`
+    res.json({ ok: true, token, name, folder, urlPath })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.get('/api/shares', requireAuth, (req, res) => {
+  try {
+    const rows = listSharesByUser.all(req.user.id)
+    const items = rows.map(r => ({ ...r, urlPath: `/s/${r.token}` }))
+    res.json({ items })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.delete('/api/shares/:id', requireAuth, (req, res) => {
+  try {
+    const id = Number(req.params.id)
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
+    const found = getShareById.get(id)
+    if (!found) return res.status(404).json({ error: 'not found' })
+    if (found.user_id !== req.user.id && !req.user.is_admin) return res.status(403).json({ error: 'forbidden' })
+    deleteShareStmt.run(id)
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+/* ---------- public share consumption ---------- */
+function getShare(req, res) {
+  const token = String(req.params.token || '').trim()
+  if (!token) { res.status(400).end(); return null }
+  const share = getShareByToken.get(token)
+  if (!share) { res.status(404).end(); return null }
+  return share
+}
+
+// Public info
+app.get('/s/:token/info', (req, res) => {
+  try {
+    const share = getShare(req, res); if (!share) return
+    const lower = share.folder
+    const upper = lower + '\uFFFF'
+    const total = db.prepare('SELECT COUNT(1) as c FROM images WHERE folder >= ? AND folder < ?').get(lower, upper).c
+    res.json({ token: share.token, name: share.name, folder: share.folder, created_at: share.created_at, total })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Public photos under shared folder
+app.get('/s/:token/photos', (req, res) => {
+  try {
+    const share = getShare(req, res); if (!share) return
+    const page = Math.max(1, parseInt(req.query.page || '1', 10))
+    const pageSize = Math.max(1, Math.min(500, parseInt(req.query.pageSize || '200', 10)))
+    const offset = (page - 1) * pageSize
+    const filter = (req.query.filter || 'all').toString()
+    let kindWhere = ''
+    if (filter === 'images') kindWhere = " AND kind = 'image'"
+    else if (filter === 'videos') kindWhere = " AND kind = 'video'"
+
+    const lower = share.folder
+    const upper = lower + '\uFFFF'
+    const rows = db.prepare(`
+      SELECT id, fname, folder, mtime, size, kind, duration
+      FROM images
+      WHERE folder >= ? AND folder < ?${kindWhere}
+      ORDER BY mtime DESC, id DESC
+      LIMIT ? OFFSET ?
+    `).all(lower, upper, pageSize, offset)
+    const total = db.prepare(`
+      SELECT COUNT(1) as c FROM images WHERE folder >= ? AND folder < ?${kindWhere}
+    `).get(lower, upper).c
+    res.json({ items: rows, total })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+function assertShareOwnsId(share, id) {
+  const row = db.prepare('SELECT id, path, fname, folder, kind FROM images WHERE id = ?').get(Number(id))
+  if (!row) return null
+  const lower = share.folder
+  const upper = lower + '\uFFFF'
+  if (!(row.folder >= lower && row.folder < upper)) return null
+  return row
+}
+
+app.get('/s/:token/thumb/:id', async (req, res) => {
+  try {
+    const share = getShare(req, res); if (!share) return
+    const row = assertShareOwnsId(share, req.params.id)
+    if (!row) return res.status(404).end()
+    const abs = path.join(PHOTOS_ROOT, row.path)
+    const thumb = await ensureThumb(abs)
+    if (!thumb) return res.status(500).end()
+    res.setHeader('content-type', 'image/webp')
+    res.setHeader('Cache-Control', 'public, max-age=31536000')
+    fs.createReadStream(thumb).pipe(res)
+  } catch { res.status(500).end() }
+})
+
+app.get('/s/:token/view/:id', async (req, res) => {
+  try {
+    const share = getShare(req, res); if (!share) return
+    const row = assertShareOwnsId(share, req.params.id)
+    if (!row) return res.status(404).end()
+    const abs = path.join(PHOTOS_ROOT, row.path)
+    if (row.kind === 'video') {
+      const thumb = await ensureThumb(abs)
+      if (!thumb) return res.status(500).end()
+      res.setHeader('content-type', 'image/webp')
+      res.setHeader('Cache-Control', 'public, max-age=31536000')
+      fs.createReadStream(thumb).pipe(res)
+    } else {
+      const view = await ensureView(abs)
+      if (!view) return res.status(500).end()
+      res.setHeader('content-type', 'image/webp')
+      res.setHeader('Cache-Control', 'public, max-age=31536000')
+      fs.createReadStream(view).pipe(res)
+    }
+  } catch { res.status(500).end() }
+})
+
+app.get('/s/:token/media/:id', async (req, res) => {
+  try {
+    const share = getShare(req, res); if (!share) return
+    const row = assertShareOwnsId(share, req.params.id)
+    if (!row) return res.status(404).end()
+    const abs = path.join(PHOTOS_ROOT, row.path)
+    if (row.kind === 'video') {
+      const stat = await fsp.stat(abs).catch(() => null)
+      if (!stat) return res.status(404).end()
+      const range = req.headers.range
+      const contentType = mime.lookup(abs) || 'video/mp4'
+      if (!range) {
+        res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': contentType, 'Accept-Ranges': 'bytes' })
+        return fs.createReadStream(abs).pipe(res)
+      }
+      const m = /bytes=(\d+)-(\d+)?/.exec(range)
+      if (!m) return res.status(416).end()
+      const start = parseInt(m[1], 10)
+      const end = m[2] ? parseInt(m[2], 10) : (stat.size - 1)
+      if (start >= stat.size || end >= stat.size) return res.status(416).end()
+      const chunkSize = (end - start) + 1
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': contentType
+      })
+      return fs.createReadStream(abs, { start, end }).pipe(res)
+    } else {
+      const disp = await ensureDisplayableMedia(abs)
+      res.setHeader('content-type', disp.contentType)
+      if (disp.contentType && disp.contentType.startsWith('image/')) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000')
+      }
+      fs.createReadStream(disp.path).pipe(res)
+    }
+  } catch { res.status(500).end() }
+})
+
+app.get('/s/:token/transcode/:id', async (req, res) => {
+  try {
+    const share = getShare(req, res); if (!share) return
+    const row = assertShareOwnsId(share, req.params.id)
+    if (!row || row.kind !== 'video') return res.status(404).end()
+    const abs = path.join(PHOTOS_ROOT, row.path)
+    const q = String(req.query.q || 'low')
+    const maxw = Math.max(160, Math.min(3840, parseInt(req.query.maxw || '0', 10) || 0))
+    const brParam = String(req.query.br || '')
+    function pickPreset() {
+      if (maxw || brParam) {
+        const vmax = brParam || '10000k'
+        const vbuf = (/\d+k$/i.test(vmax) ? `${parseInt(vmax,10)*2}k` : '20M')
+        return { height: 720, vcrf: 16, vmax, vbuf, abitrate: '192k', fps: 30 }
+      }
+      if (q === 'high') return { height: 1080, vcrf: 18, vmax: '14000k', vbuf: '28M', abitrate: '192k', fps: 30 }
+      if (q === 'medium' || q === '720') return { height: 720, vcrf: 21, vmax: '2000k', vbuf: '4M', abitrate: '96k', fps: 24 }
+      return { height: 540, vcrf: 23, vmax: '1000k', vbuf: '2M', abitrate: '64k', fps: 24 }
+    }
+    const preset = pickPreset()
+    let videoCodec = 'libx264'
+    let videoProfile = 'main'
+    let videoLevel = '4.1'
+    let crfValue = preset.vcrf
+    try {
+      const meta = await probeVideoMeta(abs)
+      if (meta && meta.codec === 'hevc') {
+        videoCodec = 'libx265'
+        videoProfile = 'main'
+        videoLevel = '4.1'
+        crfValue = Math.max(20, preset.vcrf - 6)
+      }
+    } catch {}
+    const args = [
+      '-hide_banner', '-loglevel', 'error',
+      '-i', abs,
+      '-vf', `scale=-2:${preset.height}:flags=lanczos,format=yuv420p`,
+      '-r', String(preset.fps),
+      '-c:v', videoCodec, '-preset', 'medium', '-crf', String(crfValue),
+      '-profile:v', videoProfile, '-level', videoLevel, '-pix_fmt', 'yuv420p',
+      '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',
+      '-maxrate', preset.vmax, '-bufsize', preset.vbuf,
+      '-c:a', 'aac', '-ac', '2', '-b:a', preset.abitrate,
+      '-movflags', 'frag_keyframe+empty_moov+faststart', '-f', 'mp4', 'pipe:1'
+    ]
+    res.setHeader('Content-Type', 'video/mp4')
+    res.setHeader('Cache-Control', 'no-store')
+    const ex = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    ex.stdout.pipe(res)
+    ex.on('error', () => { try { res.status(500).end() } catch {} })
+  } catch { res.status(500).end() }
+})
+
+app.get('/s/:token/download/:id', (req, res) => {
+  try {
+    const share = getShare(req, res); if (!share) return
+    const row = assertShareOwnsId(share, req.params.id)
+    if (!row) return res.status(404).end()
+    const abs = path.join(PHOTOS_ROOT, row.path)
+    const type = mime.lookup(abs) || 'application/octet-stream'
+    const name = row.fname || path.basename(abs)
+    res.setHeader('content-type', type)
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`)
+    fs.createReadStream(abs).pipe(res)
+  } catch { res.status(500).end() }
+})
+
+app.post('/s/:token/download/batch', async (req, res) => {
+  try {
+    const share = getShare(req, res); if (!share) return
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(x => parseInt(x, 10)).filter(Number.isFinite) : []
+    if (ids.length === 0) return res.status(400).json({ error: 'no ids' })
+    const rows = ids.map(id => assertShareOwnsId(share, id)).filter(Boolean)
+    if (rows.length === 0) return res.status(404).json({ error: 'not found' })
+    const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g,'')
+    const zipName = `photos-${ts}.zip`
+    res.setHeader('Content-Type', 'application/zip')
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(zipName)}`)
+    const archive = archiver('zip', { zlib: { level: 9 } })
+    archive.on('error', () => { try { res.status(500).end() } catch {} })
+    archive.pipe(res)
+    for (const r of rows) {
+      const abs = path.join(PHOTOS_ROOT, r.path)
+      try { await fsp.access(abs); archive.file(abs, { name: r.fname || path.basename(abs) }) } catch {}
+    }
+    await archive.finalize()
+  } catch { res.status(500).end() }
+})
+
+// Public HLS endpoints
+app.get('/s/:token/hls/:id/master.m3u8', (req, res) => {
+  try {
+    const share = getShare(req, res); if (!share) return
+    const row = assertShareOwnsId(share, req.params.id)
+    if (!row || row.kind !== 'video') return res.status(404).end()
+    const lines = ['#EXTM3U', '#EXT-X-VERSION:3']
+    const set = [
+      { name: '360p', height: 360, bw: 700000 },
+      { name: '540p', height: 540, bw: 1200000 },
+      { name: '720p', height: 720, bw: 2500000 }
+    ]
+    for (const v of set) {
+      lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${v.bw},RESOLUTION=1280x${v.height}`)
+      lines.push(`/s/${share.token}/hls/${row.id}/${v.height}.m3u8`)
+    }
+    res.setHeader('Content-Type', 'application/x-mpegURL')
+    res.send(lines.join('\n'))
+  } catch { res.status(500).end() }
+})
+
+app.get('/s/:token/hls/:id/:height.m3u8', async (req, res) => {
+  try {
+    const share = getShare(req, res); if (!share) return
+    const row = assertShareOwnsId(share, req.params.id)
+    if (!row || row.kind !== 'video') return res.status(404).end()
+    const height = Math.max(144, Math.min(2160, parseInt(req.params.height || '720', 10)))
+    const abs = path.join(PHOTOS_ROOT, db.prepare('SELECT path FROM images WHERE id=?').get(row.id).path)
+
+    const key = `${hashPath(abs)}_${height}`
+    const outDir = path.join(HLS_DIR, key)
+    const indexPath = path.join(outDir, 'index.m3u8')
+    if (await fileExists(indexPath)) {
+      res.setHeader('Content-Type', 'application/x-mpegURL')
+      return fs.createReadStream(indexPath).pipe(res)
+    }
+
+    await fsp.mkdir(outDir, { recursive: true })
+
+    let videoCodec = 'libx264'
+    let videoProfile = 'main'
+    let videoLevel = '4.1'
+    let crfValue = 20
+    try { const meta = await probeVideoMeta(abs); if (meta) { videoCodec = 'libx264'; videoProfile = 'main'; videoLevel = '4.1'; crfValue = 20 } } catch {}
+
+    const cfg = height <= 360
+      ? { maxrate: '700k', buf: '1400k', abr: '64k' }
+      : (height <= 540 ? { maxrate: '1200k', buf: '2400k', abr: '96k' } : { maxrate: '2500k', buf: '5000k', abr: '128k' })
+
+    const args = [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-i', abs,
+      '-vf', `scale=-2:${height}:flags=lanczos,format=yuv420p`,
+      '-c:v', videoCodec, '-preset', 'veryfast', '-profile:v', videoProfile, '-level', videoLevel, '-crf', String(crfValue),
+      '-maxrate', cfg.maxrate, '-bufsize', cfg.buf,
+      '-c:a', 'aac', '-ac', '2', '-b:a', cfg.abr,
+      '-f', 'hls',
+      '-hls_time', '4', '-hls_playlist_type', 'event', '-hls_segment_type', 'mpegts',
+      '-hls_base_url', `/s/hls/seg/${key}/`,
+      '-hls_segment_filename', path.join(outDir, 'seg%04d.ts'),
+      path.join(outDir, 'index.m3u8')
+    ]
+
+    const ex = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    let stderrBuf = ''
+    ex.stderr.on('data', (d) => { stderrBuf += String(d) })
+    const start = Date.now()
+    const poll = setInterval(async () => {
+      if (await fileExists(indexPath)) {
+        clearInterval(poll)
+        res.setHeader('Content-Type', 'application/x-mpegURL')
+        fs.createReadStream(indexPath).pipe(res)
+      } else if (Date.now() - start > 8000) {
+        clearInterval(poll)
+        try { ex.kill('SIGKILL') } catch {}
+        res.status(500).end()
+      }
+    }, 200)
+  } catch { res.status(500).end() }
+})
+
+app.get('/s/hls/seg/:key/:file', async (req, res) => {
+  try {
+    const key = String(req.params.key)
+    const file = String(req.params.file)
+    const segPath = path.join(HLS_DIR, key, file)
+    if (!(await fileExists(segPath))) return res.status(404).end()
+    res.setHeader('Content-Type', 'video/MP2T')
+    fs.createReadStream(segPath).pipe(res)
+  } catch { res.status(500).end() }
 })
 
 /* rescan: admin only */

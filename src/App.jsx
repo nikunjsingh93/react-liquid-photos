@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import Hls from 'hls.js'
 import {
   FolderTree, RefreshCcw, Image as ImageIcon, ChevronRight, ChevronDown, X,
-  Maximize2, Download, Menu, Plus, Minus, Info, CheckSquare, LogOut, Shield, Trash2, Play, Monitor
+  Maximize2, Download, Menu, Plus, Minus, Info, CheckSquare, LogOut, Shield, Trash2, Play, Monitor, Share
 } from 'lucide-react'
 
 /* Same-origin base (Vite proxy handles /api, /thumb, /view, /media, /download) */
@@ -57,6 +57,19 @@ const API = {
     (await fetch(apiUrl('/api/index/cancel'), { method: 'POST', credentials: 'include' })).json(),
   scanStatus: async () =>
     (await fetch(apiUrl('/api/index/status'), { credentials: 'include' })).json(),
+  /* shares (auth) */
+  sharesList: async () => (await fetch(apiUrl('/api/shares'), { credentials: 'include' })).json(),
+  shareCreate: async (folder, name) => (await fetch(apiUrl('/api/shares'), {
+    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folder, name })
+  })).json(),
+  shareDelete: async (id) => (await fetch(apiUrl(`/api/shares/${id}`), { method: 'DELETE', credentials: 'include' })).json(),
+  /* public shares */
+  shareInfo: async (token) => (await fetch(apiUrl(`/s/${token}/info`))).json(),
+  sharePhotos: async (token, params = {}) => {
+    const qs = new URLSearchParams(params).toString()
+    const r = await fetch(apiUrl(`/s/${token}/photos?${qs}`))
+    return await r.json()
+  },
 }
 
 /* ----- UI helpers ----- */
@@ -288,7 +301,7 @@ const HEADER_H = 56
 const MOBILE_INFO_VH = 40
 
 /* ----- Thumbnail Component ----- */
-function Thumbnail({ id, fname, loadedThumbnails, setLoadedThumbnails }) {
+function Thumbnail({ id, fname, loadedThumbnails, setLoadedThumbnails, shareToken = '' }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   
@@ -315,7 +328,7 @@ function Thumbnail({ id, fname, loadedThumbnails, setLoadedThumbnails }) {
         </div>
       )}
       <img
-        src={apiUrl(`/thumb/${id}`)}
+        src={shareToken ? apiUrl(`/s/${shareToken}/thumb/${id}`) : apiUrl(`/thumb/${id}`)}
         alt={fname}
         loading="lazy"
         className={`h-full w-full object-cover transition-opacity duration-200 ${loading ? 'opacity-0' : 'opacity-100'}`}
@@ -337,6 +350,20 @@ export default function App() {
 
   // app view
   const [view, setView] = useState('photos')
+  // share mode detection
+  const initialShareToken = useMemo(() => {
+    try {
+      const url = new URL(window.location.href)
+      const q = url.searchParams.get('share')
+      if (q) return q
+      const parts = url.pathname.split('/').filter(Boolean)
+      if (parts[0] === 's' && parts[1]) return parts[1]
+    } catch {}
+    return ''
+  }, [])
+  const [shareToken, setShareToken] = useState(initialShareToken)
+  const isShareMode = !!shareToken
+  const [shareInfo, setShareInfo] = useState(null)
 
   // Sidebar + layout
   // OPEN on desktop, COLLAPSED on mobile by default
@@ -380,6 +407,12 @@ export default function App() {
   const [tileMin, setTileMin] = useState(120)
   const [resizeOpen, setResizeOpen] = useState(false)
   const resizeRef = useRef(null)
+  // Share menu/modal
+  const [shareOpen, setShareOpen] = useState(false)
+  const shareRef = useRef(null)
+  const [shareModalOpen, setShareModalOpen] = useState(false)
+  const [shares, setShares] = useState([])
+  const [loadingShares, setLoadingShares] = useState(false)
   const [resizing, setResizing] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [scanMenuOpen, setScanMenuOpen] = useState(false)
@@ -400,7 +433,10 @@ export default function App() {
 
   // loader control
   const photoIdsRef = useRef(new Set())
-  const requestKey = useMemo(() => `${user?.id || 0}::${selected}::${treeMode}::${dateRange.from}-${dateRange.to}::${mediaFilter}`,[user?.id, selected, treeMode, dateRange.from, dateRange.to, mediaFilter])
+  const requestKey = useMemo(() => isShareMode
+    ? `share::${shareToken}::${dateRange.from}-${dateRange.to}::${mediaFilter}`
+    : `${user?.id || 0}::${selected}::${treeMode}::${dateRange.from}-${dateRange.to}::${mediaFilter}`
+  ,[isShareMode, shareToken, user?.id, selected, treeMode, dateRange.from, dateRange.to, mediaFilter])
   const lastKeyRef = useRef(null)
   const controllerRef = useRef(null)
   const inFlightRef = useRef(false)
@@ -408,6 +444,14 @@ export default function App() {
   // session check
   useEffect(() => {
     (async () => {
+      if (isShareMode) {
+        setAuthChecked(true)
+        try {
+          const info = await API.shareInfo(shareToken)
+          if (info?.token) setShareInfo(info)
+        } catch {}
+        return
+      }
       try {
         const r = await API.me()
         if (r?.user?.id) {
@@ -483,6 +527,13 @@ export default function App() {
     return () => document.removeEventListener('mousedown', onDoc)
   }, [resizeOpen])
 
+  useEffect(() => {
+    if (!shareOpen) return
+    const onDoc = (e) => { if (!shareRef.current) return; if (!shareRef.current.contains(e.target)) setShareOpen(false) }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [shareOpen])
+
   // resize indicator debounce
   useEffect(() => {
     if (!resizing) return
@@ -492,7 +543,7 @@ export default function App() {
 
   // Loader
   useEffect(() => {
-    if (!user) return
+    if (!isShareMode && !user) return
     const controller = new AbortController()
     controllerRef.current?.abort()
     controllerRef.current = controller
@@ -518,18 +569,24 @@ export default function App() {
       inFlightRef.current = true
       setLoading(true)
       try {
-        const params = (treeMode === 'dates' && String(selected).startsWith('date:'))
-          ? (() => {
-              const p = { q: '', page, pageSize: 200, _t: Date.now(), filter: mediaFilter }
-              if (dateRange.from && dateRange.to) {
-                p.from = dateRange.from; p.to = dateRange.to
-              } else {
-                p.from = 0; p.to = Date.now() + 24*60*60*1000
-              }
-              return p
-            })()
-          : { folder: selected, q: '', page, pageSize: 200, _t: Date.now(), filter: mediaFilter }
-        const r = await API.photos(params, { signal: controller.signal })
+        let r
+        if (isShareMode) {
+          const params = { page, pageSize: 200, _t: Date.now(), filter: mediaFilter }
+          r = await API.sharePhotos(shareToken, params)
+        } else {
+          const params = (treeMode === 'dates' && String(selected).startsWith('date:'))
+            ? (() => {
+                const p = { q: '', page, pageSize: 200, _t: Date.now(), filter: mediaFilter }
+                if (dateRange.from && dateRange.to) {
+                  p.from = dateRange.from; p.to = dateRange.to
+                } else {
+                  p.from = 0; p.to = Date.now() + 24*60*60*1000
+                }
+                return p
+              })()
+            : { folder: selected, q: '', page, pageSize: 200, _t: Date.now(), filter: mediaFilter }
+          r = await API.photos(params, { signal: controller.signal })
+        }
         if (r?.error) throw new Error(r.error)
         setTotal(Number(r.total || 0))
 
@@ -557,7 +614,7 @@ export default function App() {
     run()
     return () => { controller.abort(); inFlightRef.current = false; setLoading(false) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, requestKey, selected, user])
+  }, [page, requestKey, selected, user, isShareMode, shareToken])
 
   // Infinite scroll
   useEffect(() => {
@@ -691,14 +748,13 @@ export default function App() {
   const downloadActive = useCallback(() => {
     const current = photos[viewer.index]
     if (!current) return
-    // Use original file endpoint to ensure full-size downloads (works with cookies via same-origin navigation)
     const a = document.createElement('a')
-    a.href = apiUrl(`/download/${current.id}`)
+    a.href = isShareMode ? apiUrl(`/s/${shareToken}/download/${current.id}`) : apiUrl(`/download/${current.id}`)
     a.download = current.fname
     document.body.appendChild(a)
     a.click()
     a.remove()
-  }, [photos, viewer.index])
+  }, [photos, viewer.index, isShareMode, shareToken])
 
   // touch swipe
   const touchStartRef = useRef({ x: 0, y: 0, t: 0 })
@@ -771,9 +827,10 @@ export default function App() {
     const ids = Array.from(selectedIds)
     if (ids.length === 0) return
     try {
-      const res = await fetch(apiUrl('/download/batch'), {
+      const url = isShareMode ? apiUrl(`/s/${shareToken}/download/batch`) : apiUrl('/download/batch')
+      const res = await fetch(url, {
         method: 'POST',
-        credentials: 'include',
+        credentials: isShareMode ? 'omit' : 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids })
       })
@@ -796,6 +853,22 @@ export default function App() {
 
 
 
+  // Override viewer/media URLs for share mode (define before any early returns to keep hook order consistent)
+  const buildImageUrl = useCallback((id, type) => {
+    if (!id) return ''
+    if (isShareMode) {
+      if (type === 'view') return apiUrl(`/s/${shareToken}/view/${id}`)
+      if (type === 'media') return apiUrl(`/s/${shareToken}/media/${id}`)
+      if (type === 'hlsMaster') return apiUrl(`/s/${shareToken}/hls/${id}/master.m3u8`)
+      if (type === 'transcode720') return apiUrl(`/s/${shareToken}/transcode/${id}?q=720`)
+    }
+    if (type === 'view') return apiUrl(`/view/${id}`)
+    if (type === 'media') return apiUrl(`/media/${id}`)
+    if (type === 'hlsMaster') return apiUrl(`/hls/${id}/master.m3u8`)
+    if (type === 'transcode720') return apiUrl(`/transcode/${id}?q=720`)
+    return ''
+  }, [isShareMode, shareToken])
+
   /* auth view switching */
   if (!authChecked) {
     return (
@@ -806,7 +879,7 @@ export default function App() {
       </GlassShell>
     )
   }
-  if (!user) {
+  if (!user && !isShareMode) {
     return (
       <LoginScreen
         onLoggedIn={async () => {
@@ -829,17 +902,18 @@ export default function App() {
     ? `calc(100vh - ${HEADER_H}px - ${MOBILE_INFO_VH}vh - 24px)`
     : `calc(100vh - ${HEADER_H}px - 24px)`
 
+
   return (
     <GlassShell>
-      {view === 'admin' ? (
+      {!isShareMode && view === 'admin' ? (
         <AdminPanel user={user} onClose={() => setView('photos')} />
       ) : (
         <div
           className="h-full min-h-0 grid"
-          style={{ gridTemplateColumns: (!isSmall && sidebarOpen) ? `${Math.round(sidebarWidth)}px 1fr` : '1fr' }}
+          style={{ gridTemplateColumns: (!isShareMode && !isSmall && sidebarOpen) ? `${Math.round(sidebarWidth)}px 1fr` : '1fr' }}
         >
                      {/* Desktop Sidebar */}
-           {!isSmall && sidebarOpen && (
+           {!isShareMode && !isSmall && sidebarOpen && (
              <aside className="relative h-full flex flex-col border-r border-white/10 bg-zinc-950 overflow-hidden">
                {/* Top bar inside sidebar */}
                <div className="shrink-0 flex items-center gap-2 p-3 border-b border-white/10">
@@ -1091,6 +1165,7 @@ export default function App() {
             <header className="relative z-20 p-3 border-b border-white/10 bg-zinc-950">
               <div className="flex items-center gap-3">
                 {/* Toggle */}
+                {!isShareMode && (
                 <button
                   className="inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10"
                   onClick={() => setSidebarOpen(v => !v)}
@@ -1098,9 +1173,10 @@ export default function App() {
                 >
                   <Menu className="w-5 h-5 text-slate-200" />
                 </button>
+                )}
 
                 {/* Brand when sidebar closed (desktop) */}
-                {!isSmall && !sidebarOpen && (
+                {!isShareMode && !isSmall && !sidebarOpen && (
                   <div className="flex items-center gap-2">
                     <img src="/logo.svg" alt="Liquid Photos" className="w-5 h-5" />
                     <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
@@ -1118,6 +1194,7 @@ export default function App() {
                 </button>
 
                 {/* Filter: Photos/Videos */}
+                {!isShareMode && (
                 <div>
                   <select
                     className={`text-xs px-2 py-1 rounded border ${loading ? 'bg-white/5 border-white/5 opacity-50 cursor-not-allowed' : 'bg-white/10 border-white/10 hover:bg-white/15'}`}
@@ -1178,10 +1255,60 @@ export default function App() {
                     <option value="videos">Videos</option>
                   </select>
                 </div>
+                )}
 
                 
                 {/* Right side controls */}
                 <div className="ml-auto flex items-center gap-2">
+                  {/* Share button (only when inside a folder) */}
+                  {!isShareMode && treeMode === 'folders' && selected && (
+                    <div ref={shareRef} className="relative">
+                      <button
+                        className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                        onClick={() => setShareOpen(v => !v)}
+                        title="Share"
+                        aria-haspopup="menu"
+                        aria-expanded={shareOpen}
+                      >
+                        <Share className="w-4 h-4" />
+                      </button>
+                      {shareOpen && (
+                        <div className="absolute right-0 top-full mt-2 z-30 w-64 rounded border border-white/10 bg-zinc-950 shadow-xl p-2">
+                          <div className="text-xs text-slate-300 mb-2">Share options</div>
+                          <button
+                            className="w-full text-left inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15 mb-2"
+                            onClick={async () => {
+                              try {
+                                const folderName = String(selected).split('/').filter(Boolean).slice(-1)[0] || 'Folder'
+                                const r = await API.shareCreate(selected, folderName)
+                                if (!r?.token) throw new Error(r?.error || 'Share failed')
+                                const full = `${window.location.origin}${r.urlPath}`
+                                try { await navigator.clipboard.writeText(full) } catch {}
+                                window.open(r.urlPath, '_blank')
+                                setShareOpen(false)
+                              } catch (e) {
+                                alert(e?.message || 'Failed to create share')
+                              }
+                            }}
+                          >
+                            Share "{(String(selected).split('/').filter(Boolean).slice(-1)[0] || 'Folder')}" Link
+                          </button>
+                          <button
+                            className="w-full text-left inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                            onClick={async () => {
+                              setShareOpen(false)
+                              setShareModalOpen(true)
+                              setLoadingShares(true)
+                              try { const r = await API.sharesList(); setShares(r?.items || []) } catch { setShares([]) }
+                              setLoadingShares(false)
+                            }}
+                          >
+                            All shares
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div ref={resizeRef} className="relative">
                     <button
                       className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
@@ -1312,6 +1439,7 @@ export default function App() {
                             fname={p.fname}
                             loadedThumbnails={loadedThumbnails}
                             setLoadedThumbnails={setLoadedThumbnails}
+                            shareToken={isShareMode ? shareToken : ''}
                           />
                           {isRaw && (
                             <div className="absolute left-1 top-1 bg-black/60 text-white text-[7px] px-1.5 py-0.5 rounded">
@@ -1345,7 +1473,7 @@ export default function App() {
       )}
 
       {/* Mobile sidebar drawer */}
-      {isSmall && sidebarOpen && (
+      {!isShareMode && isSmall && sidebarOpen && (
         <div className="fixed inset-0 z-50">
           <button
             className="absolute inset-0 bg-black/60"
@@ -1508,23 +1636,19 @@ export default function App() {
               loading={treeLoading}
               onToggleMode={async (nextMode) => {
                 if (nextMode === treeMode) return
-                
                 // Set loading states to prevent race conditions
                 setTreeLoading(true)
                 setLoading(true)
                 setError('')
-                
                 // Add timeout to prevent stuck loading state
                 const timeoutId = setTimeout(() => {
                   setTreeLoading(false)
                   setLoading(false)
                   setError('Request timed out. Please try again.')
                 }, 30000) // 30 second timeout
-                
                 try {
                   // Update tree mode first
                   setTreeMode(nextMode)
-                  
                   // Clear all cached state immediately to prevent stale data
                   photoIdsRef.current = new Set()
                   setPhotos([])
@@ -1536,16 +1660,13 @@ export default function App() {
                   setSelectMode(false)
                   setSelectedIds(new Set())
                   setDateRange({ from: 0, to: 0 })
-                  
                   // Refresh tree with new mode
                   const t = await API.tree(nextMode, mediaFilter)
                   if (!t) throw new Error('Failed to load tree')
-                  
                   // Update tree and reset selection
                   setTree(t)
                   setOpen(new Set([t.path]))
                   setSelected(t.path)
-                  
                 } catch (e) {
                   console.error('Failed to refresh tree when switching modes:', e)
                   setError('Failed to switch view mode. Please try again.')
@@ -1568,32 +1689,256 @@ export default function App() {
         </div>
       )}
 
-                          {/* Viewer */}
-          {viewer.open && currentPhoto && (
-            <Viewer
-              isSmall={isSmall}
-              infoOpen={infoOpen}
-              setInfoOpen={setInfoOpen}
-              photo={currentPhoto}
-              truncatedName={truncatedName}
-              imgMaxHeight={imgMaxHeight}
-              onPrev={prev}
-              onNext={next}
-              onClose={closeViewer}
-              onDownload={downloadActive}
-              ensureMeta={ensureMeta}
-              meta={meta}
-              onFullscreen={() => openFullscreen(viewer.index)}
-              onTouchStart={onTouchStart}
-              onTouchMove={onTouchMove}
-              onTouchEnd={onTouchEnd}
-            />
-          )}
+      {/* All shares modal */}
+      {!isShareMode && shareModalOpen && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setShareModalOpen(false)} />
+          <div className="relative w-[92vw] max-w-[560px] max-h-[80vh] overflow-auto rounded-xl border border-white/10 bg-zinc-950 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Share className="w-5 h-5" />
+              <div className="text-sm font-semibold">All shares</div>
+              <button className="ml-auto p-2 rounded bg-white/10 border border-white/10" onClick={() => setShareModalOpen(false)}><X className="w-4 h-4" /></button>
+            </div>
+            {loadingShares ? (
+              <div className="text-slate-400 text-sm">Loading…</div>
+            ) : (
+              <div className="space-y-2">
+                {shares.map(s => (
+                  <div key={s.id} className="rounded border border-white/10 p-2 flex items-center gap-2">
+                    <div className="min-w-0">
+                      <div className="text-sm text-slate-100 truncate">{s.name}</div>
+                      <div className="text-xs text-slate-400 truncate">{s.folder}</div>
+                      <div className="text-[10px] text-slate-500">{new Date(s.created_at).toLocaleString()}</div>
+                    </div>
+                    <div className="ml-auto flex items-center gap-2">
+                      <button className="text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15" onClick={async()=>{ try { await navigator.clipboard.writeText(`${window.location.origin}${s.urlPath}`) } catch {} }}>Copy link</button>
+                      <a className="text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15" href={s.urlPath} target="_blank" rel="noreferrer">Open</a>
+                      <button className="text-xs px-2 py-1 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300 hover:bg-rose-500/15" onClick={async()=>{ if (!confirm('Delete this share?')) return; try { const r = await API.shareDelete(s.id); if (r?.ok) setShares(prev=>prev.filter(x=>x.id!==s.id)) } catch {} }}>Delete</button>
+                    </div>
+                  </div>
+                ))}
+                {shares.length === 0 && (
+                  <div className="text-slate-400 text-sm">No shares yet.</div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Viewer */}
+      {viewer.open && currentPhoto && (
+        <Viewer
+          isSmall={isSmall}
+          infoOpen={infoOpen}
+          setInfoOpen={setInfoOpen}
+          photo={currentPhoto}
+          truncatedName={truncatedName}
+          imgMaxHeight={imgMaxHeight}
+          onPrev={prev}
+          onNext={next}
+          onClose={closeViewer}
+          onDownload={downloadActive}
+          ensureMeta={ensureMeta}
+          meta={meta}
+          onFullscreen={() => openFullscreen(viewer.index)}
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
+          buildImageUrl={buildImageUrl}
+        />
+      )}
     </GlassShell>
   )
 }
 
 function prevLen(arr) { return Array.isArray(arr) ? arr.length : 0 }
+
+/* ----- Viewer ----- */
+function Viewer({
+  isSmall, infoOpen, setInfoOpen, photo, truncatedName, imgMaxHeight,
+  onPrev, onNext, onClose, onDownload, ensureMeta, meta, onFullscreen,
+  onTouchStart, onTouchMove, onTouchEnd, buildImageUrl
+}) {
+  const [useFullRes, setUseFullRes] = useState(false)
+  const [imageLoading, setImageLoading] = useState(true)
+  const isVideo = String(photo?.kind) === 'video'
+  const [quality, setQuality] = useState('reduced') // 'original' | 'reduced'
+  const [imageUrl, setImageUrl] = useState('')
+  const [isBrowserFullscreen, setIsBrowserFullscreen] = useState(false)
+
+  // Reset loading state when photo changes
+  useEffect(() => {
+    setImageLoading(true)
+  }, [photo.id])
+
+  // Check if we're in browser fullscreen mode
+  useEffect(() => {
+    const checkFullscreen = () => {
+      const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement)
+      setIsBrowserFullscreen(isFullscreen)
+    }
+    checkFullscreen()
+    const handleFullscreenChange = () => { checkFullscreen() }
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
+    document.addEventListener('msfullscreenchange', handleFullscreenChange)
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
+      document.removeEventListener('msfullscreenchange', handleFullscreenChange)
+    }
+  }, [])
+
+  // Image URL building
+  useEffect(() => {
+    if (!photo?.id || isVideo) return
+    const url = useFullRes ? buildImageUrl(photo.id, 'media') : buildImageUrl(photo.id, 'view')
+    setImageUrl(url)
+    setImageLoading(true)
+  }, [photo.id, useFullRes, isVideo, buildImageUrl])
+
+  return (
+    <div 
+      className={`fixed inset-0 z-50 flex ${isBrowserFullscreen ? 'bg-black' : 'bg-black/80 backdrop-blur-sm'}`}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+    >
+      <div className="flex-1 flex flex-col">
+        {/* Header when not browser fullscreen */}
+        {!isBrowserFullscreen && (
+          <div className="relative flex items-center px-4" style={{ height: HEADER_H }}>
+            <div className="pointer-events-none sm:absolute sm:left-1/2 sm:-translate-x-1/2 sm:text-center sm:max-w-[60vw] min-w-0 flex-1">
+              {(isVideo || imageUrl) && (
+                <div className="truncate text-sm text-white text-left sm:text-center">
+                  {truncatedName}
+                </div>
+              )}
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              {!isVideo && (
+                <>
+                  {!/iPad|iPhone|iPod/.test(navigator.userAgent) && (
+                    <button
+                      className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                      onClick={onFullscreen}
+                      title="Full screen"
+                    >
+                      <Monitor className="w-5 h-5 text-white" />
+                    </button>
+                  )}
+                  <button
+                    className={`px-3 py-1 rounded-full border border-white/10 ${useFullRes ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
+                    onClick={() => { setUseFullRes(!useFullRes); setImageLoading(true) }}
+                    title={useFullRes ? 'Switch to Optimized view' : 'Switch to Original view'}
+                  >
+                    {useFullRes ? 'Original' : 'Optimized'}
+                  </button>
+                </>
+              )}
+              {isVideo && (
+                <button
+                  className={`px-3 py-1 rounded-full border border-white/10 ${quality ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
+                  onClick={() => { setQuality(q => (q === 'original' ? 'reduced' : 'original')); setImageLoading(true) }}
+                  title={quality === 'original' ? 'Tap to switch to Optimized' : 'Tap to switch to Original'}
+                >
+                  {quality === 'original' ? 'Original' : 'Optimized'}
+                </button>
+              )}
+              <button
+                className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                onClick={async () => { setInfoOpen(v => !v); if (!infoOpen) await ensureMeta(photo.id) }}
+                title="Info"
+              >
+                <Info className="w-6 h-6 text-white" />
+              </button>
+              <button
+                className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                onClick={onDownload}
+                title="Download"
+              >
+                <Download className="w-6 h-6 text-white" />
+              </button>
+              <button
+                className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                onClick={onClose}
+                title="Close"
+              >
+                <X className="w-6 h-6 text-white" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="relative flex-1 flex items-center justify-center px-3 pb-3">
+          {/* Show navigation buttons only when NOT in browser fullscreen mode */}
+          {!isBrowserFullscreen && (
+            <>
+              <button className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={onPrev}>◀</button>
+              <button className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={onNext}>▶</button>
+            </>
+          )}
+
+          {imageLoading && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="w-12 h-12 border-4 border-white/30 border-t-white rounded-full animate-spin"></div>
+            </div>
+          )}
+
+          {isVideo ? (
+            <VideoPlayer
+              srcOriginal={buildImageUrl(photo.id, 'media')}
+              srcHls={buildImageUrl(photo.id, 'hlsMaster')}
+              srcReduced={buildImageUrl(photo.id, 'transcode720')}
+              mode={quality}
+              style={{
+                maxHeight: isBrowserFullscreen ? '100vh' : imgMaxHeight,
+                maxWidth: isBrowserFullscreen ? '100vw' : (isSmall && infoOpen ? '94vw' : '92vw'),
+                width: '100%',
+                height: 'auto',
+                objectFit: 'contain'
+              }}
+              poster={buildImageUrl(photo.id, 'view')}
+              onLoad={() => setImageLoading(false)}
+              onError={() => setImageLoading(false)}
+            />
+          ) : (
+            imageUrl && (
+              <img
+                src={imageUrl}
+                alt={photo.fname}
+                style={{ 
+                  maxHeight: isBrowserFullscreen ? '100vh' : imgMaxHeight, 
+                  maxWidth: isBrowserFullscreen ? '100vw' : (isSmall && infoOpen ? '94vw' : '92vw'),
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain'
+                }}
+                onLoad={() => setImageLoading(false)}
+                onError={() => setImageLoading(false)}
+              />
+            )
+          )}
+        </div>
+      </div>
+
+      {/* Info panel when not browser fullscreen */}
+      {!isBrowserFullscreen && !isSmall && infoOpen && (
+        <aside className="w-[340px] max-w-[80vw] border-l border-white/10 bg-zinc-950/95 backdrop-blur px-4 py-4 overflow-auto">
+          <InfoPanel meta={meta} fallback={photo} />
+        </aside>
+      )}
+      {!isBrowserFullscreen && isSmall && infoOpen && (
+        <aside
+          className="fixed bottom-0 left-0 right-0 z-[60] border-t border-white/10 bg-zinc-950/95 backdrop-blur px-4 py-3 overflow-auto"
+          style={{ height: `${MOBILE_INFO_VH}vh` }}
+        >
+          <InfoPanel meta={meta} fallback={photo} />
+        </aside>
+      )}
+    </div>
+  )}
 
 /* ----- HLS-capable Video Player ----- */
 function VideoPlayer({ srcOriginal, srcHls, srcReduced, mode, style, poster, onLoad, onError }) {
@@ -1840,271 +2185,3 @@ function AdminPanel({ user, onClose }) {
     </div>
   )
 }
-
-/* ----- Info Panel ----- */
-function InfoPanel({ meta, fallback }) {
-  const file = meta?.fname || fallback?.fname
-  const folder = meta?.folder || ''
-  return (
-    <>
-      <div className="text-sm text-slate-200 font-semibold break-words">{file}</div>
-      <div className="mt-1 text-xs text-slate-400 break-all">{folder}</div>
-      <div className="mt-2 text-xs text-slate-300">
-        <div>Size: <span className="text-slate-100">{formatBytes(meta?.size ?? fallback?.size)}</span></div>
-        {meta?.width && meta?.height && (
-          <div>Dimensions: <span className="text-slate-100">{meta.width} × {meta.height}</span></div>
-        )}
-        {meta?.format && (
-          <div>Format: <span className="text-slate-100 uppercase">{meta.format}</span></div>
-        )}
-      </div>
-      <div className="mt-4">
-        <div className="text-xs font-semibold text-slate-300 mb-2">EXIF</div>
-        {meta?.exif && Object.keys(meta.exif).length > 0 ? (
-          <div className="space-y-1 text-xs text-slate-300">
-            {(meta.exif.DateTimeOriginal || meta.exif.DateTime) && (
-              <div>Date Taken: <span className="text-slate-100">{formatExifDate(meta.exif.DateTimeOriginal || meta.exif.DateTime)}</span></div>
-            )}
-            {(meta.exif.Make || meta.exif.Model) && (
-              <div>Camera: <span className="text-slate-100">{[meta.exif.Make, meta.exif.Model].filter(Boolean).join(' ')}</span></div>
-            )}
-            {(meta.exif.LensModel || meta.exif.Lens) && (
-              <div>Lens: <span className="text-slate-100">{meta.exif.LensModel || meta.exif.Lens}</span></div>
-            )}
-            {(meta.exif.FNumber || meta.exif.ApertureValue) && (
-              <div>Aperture: <span className="text-slate-100">f/{meta.exif.FNumber || meta.exif.ApertureValue}</span></div>
-            )}
-            {(meta.exif.ExposureTime || meta.exif.ShutterSpeedValue) && (
-              <div>Shutter: <span className="text-slate-100">{meta.exif.ExposureTime || meta.exif.ShutterSpeedValue}s</span></div>
-            )}
-            {(meta.exif.ISO || meta.exif.ISOSpeedRatings) && (
-              <div>ISO: <span className="text-slate-100">{meta.exif.ISO || meta.exif.ISOSpeedRatings}</span></div>
-            )}
-            {(meta.exif.FocalLength || meta.exif.FocalLengthIn35mmFormat) && (
-              <div>Focal: <span className="text-slate-100">{meta.exif.FocalLength || meta.exif.FocalLengthIn35mmFormat}mm</span></div>
-            )}
-            {(meta.exif.GPSLatitude != null && meta.exif.GPSLongitude != null) && (
-              <div>GPS: <span className="text-slate-100">{meta.exif.GPSLatitude}, {meta.exif.GPSLongitude}</span></div>
-            )}
-            {/* Debug: Show all available EXIF fields */}
-            {process.env.NODE_ENV === 'development' && (
-              <details className="mt-2">
-                <summary className="text-slate-400 cursor-pointer">Debug: All EXIF fields</summary>
-                <pre className="text-[8px] text-slate-500 mt-1 overflow-auto max-h-20">
-                  {JSON.stringify(meta.exif, null, 2)}
-                </pre>
-              </details>
-            )}
-          </div>
-        ) : (
-          <div className="text-xs text-slate-400">No EXIF available.</div>
-        )}
-      </div>
-    </>
-  )
-}
-
-/* ----- Viewer ----- */
-function Viewer({
-  isSmall, infoOpen, setInfoOpen, photo, truncatedName, imgMaxHeight,
-  onPrev, onNext, onClose, onDownload, ensureMeta, meta, onFullscreen,
-  onTouchStart, onTouchMove, onTouchEnd
-}) {
-  const [useFullRes, setUseFullRes] = useState(false)
-  const [imageLoading, setImageLoading] = useState(true)
-  const isVideo = String(photo?.kind) === 'video'
-  const [quality, setQuality] = useState('reduced') // 'original' | 'reduced'
-  const [imageUrl, setImageUrl] = useState('')
-  const [isBrowserFullscreen, setIsBrowserFullscreen] = useState(false)
-
-  // Reset loading state when photo changes
-  useEffect(() => {
-    setImageLoading(true)
-  }, [photo.id])
-
-  // Check if we're in browser fullscreen mode
-  useEffect(() => {
-    const checkFullscreen = () => {
-      const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement)
-      setIsBrowserFullscreen(isFullscreen)
-    }
-    
-    checkFullscreen()
-    
-    const handleFullscreenChange = () => {
-      checkFullscreen()
-    }
-
-    document.addEventListener('fullscreenchange', handleFullscreenChange)
-    document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
-    document.addEventListener('msfullscreenchange', handleFullscreenChange)
-
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange)
-      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
-      document.removeEventListener('msfullscreenchange', handleFullscreenChange)
-    }
-  }, [])
-
-  // Simplified image loading - use direct URLs with proper caching
-  useEffect(() => {
-    if (!photo?.id || isVideo) return
-    
-    const path = useFullRes ? `/media/${photo.id}` : `/view/${photo.id}`
-    const url = apiUrl(path)
-    
-    setImageUrl(url)
-    setImageLoading(true)
-  }, [photo.id, useFullRes, isVideo])
-
-
-
-  return (
-    <div 
-      className={`fixed inset-0 z-50 flex ${isBrowserFullscreen ? 'bg-black' : 'bg-black/80 backdrop-blur-sm'}`}
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-    >
-      <div className="flex-1 flex flex-col">
-        {/* Show header only when NOT in browser fullscreen mode */}
-        {!isBrowserFullscreen && (
-          <div className="relative flex items-center px-4" style={{ height: HEADER_H }}>
-            <div className="pointer-events-none sm:absolute sm:left-1/2 sm:-translate-x-1/2 sm:text-center sm:max-w-[60vw] min-w-0 flex-1">
-              {(isVideo || imageUrl) && (
-                <div className="truncate text-sm text-white text-left sm:text-center">
-                  {truncatedName}
-                </div>
-              )}
-            </div>
-            <div className="ml-auto flex items-center gap-2">
-              {!isVideo && (
-                <>
-                  {!/iPad|iPhone|iPod/.test(navigator.userAgent) && (
-                    <button
-                      className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
-                      onClick={onFullscreen}
-                      title="Full screen"
-                    >
-                      <Monitor className="w-5 h-5 text-white" />
-                    </button>
-                  )}
-                  <button
-                    className={`px-3 py-1 rounded-full border border-white/10 ${useFullRes ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
-                    onClick={() => {
-                      setUseFullRes(!useFullRes)
-                      setImageLoading(true)
-                    }}
-                    title={useFullRes ? 'Switch to Optimized view' : 'Switch to Original view'}
-                  >
-                    {useFullRes ? 'Original' : 'Optimized'}
-                  </button>
-                </>
-              )}
-              {isVideo && (
-                <button
-                  className={`px-3 py-1 rounded-full border border-white/10 ${quality ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
-                  onClick={() => {
-                    setQuality(q => (q === 'original' ? 'reduced' : 'original'))
-                    setImageLoading(true)
-                  }}
-                  title={quality === 'original' ? 'Tap to switch to Optimized' : 'Tap to switch to Original'}
-                >
-                  {quality === 'original' ? 'Original' : 'Optimized'}
-                </button>
-              )}
-              <button
-                className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
-                onClick={async () => { setInfoOpen(v => !v); if (!infoOpen) await ensureMeta(photo.id) }}
-                title="Info"
-              >
-                <Info className="w-6 h-6 text-white" />
-              </button>
-              <button
-                className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
-                onClick={onDownload}
-                title="Download"
-              >
-                <Download className="w-6 h-6 text-white" />
-              </button>
-              <button
-                className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
-                onClick={onClose}
-                title="Close"
-              >
-                <X className="w-6 h-6 text-white" />
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="relative flex-1 flex items-center justify-center px-3 pb-3">
-          {/* Show navigation buttons only when NOT in browser fullscreen mode */}
-          {!isBrowserFullscreen && (
-            <>
-              <button className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={onPrev}>◀</button>
-              <button className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={onNext}>▶</button>
-            </>
-          )}
-
-          {imageLoading && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="w-12 h-12 border-4 border-white/30 border-t-white rounded-full animate-spin"></div>
-            </div>
-          )}
-
-          {isVideo ? (
-            <VideoPlayer
-              srcOriginal={apiUrl(`/media/${photo.id}`)}
-              srcHls={apiUrl(`/hls/${photo.id}/master.m3u8`)}
-              srcReduced={apiUrl(`/transcode/${photo.id}?q=720`)}
-              mode={quality}
-              style={{
-                maxHeight: isBrowserFullscreen ? '100vh' : imgMaxHeight,
-                maxWidth: isBrowserFullscreen ? '100vw' : (isSmall && infoOpen ? '94vw' : '92vw'),
-                width: '100%',
-                height: 'auto',
-                objectFit: 'contain'
-              }}
-              poster={apiUrl(`/view/${photo.id}`)}
-              onLoad={() => setImageLoading(false)}
-              onError={() => setImageLoading(false)}
-            />
-          ) : (
-            imageUrl && (
-              <img
-                src={imageUrl}
-                alt={photo.fname}
-                style={{ 
-                  maxHeight: isBrowserFullscreen ? '100vh' : imgMaxHeight, 
-                  maxWidth: isBrowserFullscreen ? '100vw' : (isSmall && infoOpen ? '94vw' : '92vw'),
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain'
-                }}
-                onLoad={() => setImageLoading(false)}
-                onError={() => setImageLoading(false)}
-              />
-            )
-          )}
-        </div>
-      </div>
-
-      {/* Show info panel only when NOT in browser fullscreen mode */}
-      {!isBrowserFullscreen && !isSmall && infoOpen && (
-        <aside className="w-[340px] max-w-[80vw] border-l border-white/10 bg-zinc-950/95 backdrop-blur px-4 py-4 overflow-auto">
-          <InfoPanel meta={meta} fallback={photo} />
-        </aside>
-      )}
-      {!isBrowserFullscreen && isSmall && infoOpen && (
-        <aside
-          className="fixed bottom-0 left-0 right-0 z-[60] border-t border-white/10 bg-zinc-950/95 backdrop-blur px-4 py-3 overflow-auto"
-          style={{ height: `${MOBILE_INFO_VH}vh` }}
-        >
-          <InfoPanel meta={meta} fallback={photo} />
-        </aside>
-      )}
-    </div>
-  )
-}
-
