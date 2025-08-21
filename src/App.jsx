@@ -843,7 +843,7 @@ export default function App() {
              <aside className="relative h-full flex flex-col border-r border-white/10 bg-zinc-950 overflow-hidden">
                {/* Top bar inside sidebar */}
                <div className="shrink-0 flex items-center gap-2 p-3 border-b border-white/10">
-                 <ImageIcon className="w-5 h-5 text-slate-200" />
+                 <img src="/logo.svg" alt="Liquid Photos" className="w-5 h-5" />
                  <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
                  {user?.is_admin && (
                  <>
@@ -1102,7 +1102,7 @@ export default function App() {
                 {/* Brand when sidebar closed (desktop) */}
                 {!isSmall && !sidebarOpen && (
                   <div className="flex items-center gap-2">
-                    <ImageIcon className="w-5 h-5 text-slate-200" />
+                    <img src="/logo.svg" alt="Liquid Photos" className="w-5 h-5" />
                     <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
                   </div>
                 )}
@@ -1362,7 +1362,7 @@ export default function App() {
               >
                 <Menu className="w-5 h-5 text-slate-200" />
               </button>
-              <ImageIcon className="w-5 h-5 text-slate-200" />
+              <img src="/logo.svg" alt="Liquid Photos" className="w-5 h-5" />
               <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
               {user?.is_admin && (
                 <div className="relative ml-auto">
