@@ -569,7 +569,12 @@ export default function App() {
   }, [initialLoaded])
 
   // Viewer helpers
-  const openViewer = (idx) => { if (!selectMode) { setViewer({ open: true, index: idx }); setInfoOpen(false) } }
+  const openViewer = (idx) => { 
+    if (!selectMode) { 
+      setViewer({ open: true, index: idx }); 
+      setInfoOpen(false) 
+    } 
+  }
   const closeViewer = () => { setViewer({ open: false, index: 0 }); setInfoOpen(false) }
   const next = () => setViewer(v => ({ ...v, index: Math.min(v.index + 1, photos.length - 1) }))
   const prev = () => setViewer(v => ({ ...v, index: Math.max(v.index - 1, 0) }))
@@ -1111,68 +1116,77 @@ export default function App() {
               )}
 
               {/* Grid */}
-              <div
-                className="grid"
-                style={{
-                  gridTemplateColumns: `repeat(auto-fill, minmax(${Math.max(60, tileMin)}px, 1fr))`,
-                  gap: isSmall ? '2px' : '3px'
-                }}
-              >
-                {(() => {
-                  const nodes = []
-                  let lastDateKey = ''
-                  for (let i = 0; i < photos.length; i++) {
-                    const p = photos[i]
-                    const dateKey = new Date(Number(p.mtime)).toLocaleDateString('en-US', { timeZone: 'UTC' })
-                    if (dateKey !== lastDateKey) {
+              {initialLoaded && photos.length === 0 ? (
+                <div className="flex items-center justify-center py-16">
+                  <div className="text-center">
+                    <div className="text-slate-400 text-lg mb-2">There are no Items in this selection</div>
+                    <div className="text-slate-500 text-sm">Try selecting a different folder or adjusting your filters</div>
+                  </div>
+                </div>
+              ) : (
+                <div
+                  className="grid"
+                  style={{
+                    gridTemplateColumns: `repeat(auto-fill, minmax(${Math.max(60, tileMin)}px, 1fr))`,
+                    gap: isSmall ? '2px' : '3px'
+                  }}
+                >
+                  {(() => {
+                    const nodes = []
+                    let lastDateKey = ''
+                    for (let i = 0; i < photos.length; i++) {
+                      const p = photos[i]
+                      const dateKey = new Date(Number(p.mtime)).toLocaleDateString('en-US', { timeZone: 'UTC' })
+                      if (dateKey !== lastDateKey) {
+                        nodes.push(
+                          <div
+                            key={`hdr-${dateKey}-${i}`}
+                            style={{ gridColumn: '1 / -1' }}
+                            className="mt-3 mb-1 px-1 py-1 text-xs sm:text-sm font-medium text-slate-200"
+                          >
+                            {formatDayHeader(p.mtime)}
+                          </div>
+                        )
+                        lastDateKey = dateKey
+                      }
+                      const isSel = selectedIds.has(p.id)
+                      const isRaw = isRawName(p.fname)
+                      const isVideo = String(p.kind) === 'video'
                       nodes.push(
-                        <div
-                          key={`hdr-${dateKey}-${i}`}
-                          style={{ gridColumn: '1 / -1' }}
-                          className="mt-3 mb-1 px-1 py-1 text-xs sm:text-sm font-medium text-slate-200"
+                        <button
+                          key={p.id}
+                          className={`group relative aspect-[4/3] overflow-hidden bg-white/5 ${isSel ? 'ring-2 ring-sky-400/60' : ''} hover:scale-[1.01] transition`}
+                          onClick={() => onTileClick(p.id, i)}
                         >
-                          {formatDayHeader(p.mtime)}
-                        </div>
+                          <Thumbnail
+                            id={p.id}
+                            fname={p.fname}
+                            loadedThumbnails={loadedThumbnails}
+                            setLoadedThumbnails={setLoadedThumbnails}
+                          />
+                          {isRaw && (
+                            <div className="absolute left-1 top-1 bg-black/60 text-white text-[7px] px-1.5 py-0.5 rounded">
+                              RAW
+                            </div>
+                          )}
+                          {isVideo && (
+                            <div className="absolute left-1 top-1 bg-black/60 text-white px-1.5 py-0.5 rounded">
+                              <Play className="w-3 h-3" />
+                            </div>
+                          )}
+                          {selectMode && (
+                            <div className={`absolute left-1 ${(isRaw || isVideo) ? 'top-6' : 'top-1'} bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded`}>
+                              {isSel ? '✓ Selected' : 'Tap to select'}
+                            </div>
+                          )}
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition" />
+                        </button>
                       )
-                      lastDateKey = dateKey
                     }
-                    const isSel = selectedIds.has(p.id)
-                    const isRaw = isRawName(p.fname)
-                    const isVideo = String(p.kind) === 'video'
-                    nodes.push(
-                      <button
-                        key={p.id}
-                        className={`group relative aspect-[4/3] overflow-hidden bg-white/5 ${isSel ? 'ring-2 ring-sky-400/60' : ''} hover:scale-[1.01] transition`}
-                        onClick={() => onTileClick(p.id, i)}
-                      >
-                        <Thumbnail
-                          id={p.id}
-                          fname={p.fname}
-                          loadedThumbnails={loadedThumbnails}
-                          setLoadedThumbnails={setLoadedThumbnails}
-                        />
-                        {isRaw && (
-                          <div className="absolute left-1 top-1 bg-black/60 text-white text-[7px] px-1.5 py-0.5 rounded">
-                            RAW
-                          </div>
-                        )}
-                        {isVideo && (
-                          <div className="absolute left-1 top-1 bg-black/60 text-white px-1.5 py-0.5 rounded">
-                            <Play className="w-3 h-3" />
-                          </div>
-                        )}
-                        {selectMode && (
-                          <div className={`absolute left-1 ${(isRaw || isVideo) ? 'top-6' : 'top-1'} bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded`}>
-                            {isSel ? '✓ Selected' : 'Tap to select'}
-                          </div>
-                        )}
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition" />
-                      </button>
-                    )
-                  }
-                  return nodes
-                })()}
-              </div>
+                    return nodes
+                  })()}
+                </div>
+              )}
 
               <div ref={sentinelRef} className="h-20" />
               {loading && <div className="text-center text-slate-400 py-4">Loading…</div>}
@@ -1395,7 +1409,7 @@ export default function App() {
 function prevLen(arr) { return Array.isArray(arr) ? arr.length : 0 }
 
 /* ----- HLS-capable Video Player ----- */
-function VideoPlayer({ srcOriginal, srcHls, srcReduced, mode, style, poster }) {
+function VideoPlayer({ srcOriginal, srcHls, srcReduced, mode, style, poster, onLoad, onError }) {
   const videoRef = useRef(null)
   useEffect(() => {
     const video = videoRef.current
@@ -1411,7 +1425,15 @@ function VideoPlayer({ srcOriginal, srcHls, srcReduced, mode, style, poster }) {
         hls = new Hls({ maxBufferLength: 30, liveSyncDurationCount: 3 })
         hls.loadSource(srcHls)
         hls.attachMedia(video)
-      } catch {}
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (onLoad) onLoad()
+        })
+        hls.on(Hls.Events.ERROR, () => {
+          if (onError) onError()
+        })
+      } catch {
+        if (onError) onError()
+      }
     } else {
       // Fallback to direct MP4 stream (transcode or original)
       video.src = source
@@ -1419,7 +1441,7 @@ function VideoPlayer({ srcOriginal, srcHls, srcReduced, mode, style, poster }) {
     return () => {
       try { if (hls) hls.destroy() } catch {}
     }
-  }, [mode, srcOriginal, srcHls, srcReduced])
+  }, [mode, srcOriginal, srcHls, srcReduced, onLoad, onError])
 
   return (
     <video
@@ -1428,6 +1450,8 @@ function VideoPlayer({ srcOriginal, srcHls, srcReduced, mode, style, poster }) {
       autoPlay={false}
       style={style}
       poster={poster}
+      onLoadedData={onLoad}
+      onError={onError}
     />
   )
 }
@@ -1699,13 +1723,13 @@ function Viewer({
   onPrev, onNext, onClose, onDownload, ensureMeta, meta
 }) {
   const [useFullRes, setUseFullRes] = useState(false)
-  const [imageLoading, setImageLoading] = useState(false)
+  const [imageLoading, setImageLoading] = useState(true)
   const isVideo = String(photo?.kind) === 'video'
   const [quality, setQuality] = useState('reduced') // 'original' | 'reduced'
 
   // Reset loading state when photo changes
   useEffect(() => {
-    setImageLoading(false)
+    setImageLoading(true)
   }, [photo.id])
 
   // Touch swipe handlers
@@ -1786,7 +1810,10 @@ function Viewer({
             {isVideo && (
               <button
                 className={`px-3 py-1 rounded-full border border-white/10 ${quality ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
-                onClick={() => setQuality(q => (q === 'original' ? 'reduced' : 'original'))}
+                onClick={() => {
+                  setQuality(q => (q === 'original' ? 'reduced' : 'original'))
+                  setImageLoading(true)
+                }}
                 title={quality === 'original' ? 'Tap to switch to Optimized' : 'Tap to switch to Original'}
               >
                 {quality === 'original' ? 'Original' : 'Optimized'}
@@ -1820,8 +1847,8 @@ function Viewer({
           <button className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={onPrev}>◀</button>
 
           {imageLoading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-              <div className="text-white text-sm">Loading...</div>
+            <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+              <div className="w-12 h-12 border-4 border-white/30 border-t-white rounded-full animate-spin"></div>
             </div>
           )}
 
@@ -1839,6 +1866,8 @@ function Viewer({
                 objectFit: 'contain'
               }}
               poster={apiUrl(`/view/${photo.id}`)}
+              onLoad={() => setImageLoading(false)}
+              onError={() => setImageLoading(false)}
             />
           ) : (
             <img
