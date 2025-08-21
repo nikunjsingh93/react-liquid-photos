@@ -721,7 +721,7 @@ export default function App() {
     const adx = Math.abs(dx)
     const ady = Math.abs(dy)
     const dt = Date.now() - start.t
-    const THRESH = 50
+    const THRESH = 20
     const MAX_ANGLE = 0.57
     const MIN_SWIPE_TIME = 100
     const MAX_SWIPE_TIME = 800
