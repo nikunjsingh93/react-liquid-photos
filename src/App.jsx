@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import Hls from 'hls.js'
 import {
   FolderTree, RefreshCcw, Image as ImageIcon, ChevronRight, ChevronDown, X,
-  Maximize2, Download, Menu, Plus, Minus, Info, CheckSquare, LogOut, Shield, Trash2, Play
+  Maximize2, Download, Menu, Plus, Minus, Info, CheckSquare, LogOut, Shield, Trash2, Play, Monitor
 } from 'lucide-react'
 
 /* Same-origin base (Vite proxy handles /api, /thumb, /view, /media, /download) */
@@ -370,6 +370,9 @@ export default function App() {
   const metaCacheRef = useRef(new Map())
   const [meta, setMeta] = useState(null)
 
+  // Full screen state
+  const [fullscreen, setFullscreen] = useState({ open: false, index: 0 })
+
   // Multi-select
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState(new Set())
@@ -581,6 +584,36 @@ export default function App() {
   const next = () => setViewer(v => ({ ...v, index: Math.min(v.index + 1, photos.length - 1) }))
   const prev = () => setViewer(v => ({ ...v, index: Math.max(v.index - 1, 0) }))
 
+  // Full screen helpers
+  const openFullscreen = (idx) => {
+    if (!selectMode) {
+      setFullscreen({ open: true, index: idx })
+      setViewer({ open: false, index: 0 })
+      setInfoOpen(false)
+      // Request browser fullscreen
+      if (document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen()
+      } else if (document.documentElement.webkitRequestFullscreen) {
+        document.documentElement.webkitRequestFullscreen()
+      } else if (document.documentElement.msRequestFullscreen) {
+        document.documentElement.msRequestFullscreen()
+      }
+    }
+  }
+  const closeFullscreen = () => { 
+    setFullscreen({ open: false, index: 0 })
+    // Exit browser fullscreen
+    if (document.exitFullscreen) {
+      document.exitFullscreen()
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen()
+    } else if (document.msExitFullscreen) {
+      document.msExitFullscreen()
+    }
+  }
+  const nextFullscreen = () => setFullscreen(f => ({ ...f, index: Math.min(f.index + 1, photos.length - 1) }))
+  const prevFullscreen = () => setFullscreen(f => ({ ...f, index: Math.max(f.index - 1, 0) }))
+
   // meta
   const ensureMeta = useCallback(async (id) => {
     if (!id) return null
@@ -611,14 +644,39 @@ export default function App() {
   // keys
   useEffect(() => {
     const onKey = (e) => {
-      if (!viewer.open) return
-      if (e.key === 'Escape') closeViewer()
-      if (e.key === 'ArrowRight') next()
-      if (e.key === 'ArrowLeft') prev()
+      if (fullscreen.open) {
+        if (e.key === 'Escape') closeFullscreen()
+        if (e.key === 'ArrowRight') nextFullscreen()
+        if (e.key === 'ArrowLeft') prevFullscreen()
+      } else if (viewer.open) {
+        if (e.key === 'Escape') closeViewer()
+        if (e.key === 'ArrowRight') next()
+        if (e.key === 'ArrowLeft') prev()
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [viewer.open, photos.length])
+  }, [fullscreen.open, viewer.open, photos.length])
+
+  // Handle fullscreen change events
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement && !document.webkitFullscreenElement && !document.msFullscreenElement) {
+        // User exited fullscreen, close our fullscreen viewer
+        setFullscreen({ open: false, index: 0 })
+      }
+    }
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
+    document.addEventListener('msfullscreenchange', handleFullscreenChange)
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
+      document.removeEventListener('msfullscreenchange', handleFullscreenChange)
+    }
+  }, [])
 
   // download single
   const downloadActive = useCallback(() => {
@@ -721,6 +779,45 @@ export default function App() {
     }
   }
 
+  // touch swipe for fullscreen
+  const fullscreenTouchStartRef = useRef({ x: 0, y: 0, t: 0 })
+  const onFullscreenTouchStart = (e) => {
+    const t = e.touches[0]
+    fullscreenTouchStartRef.current = { x: t.clientX, y: t.clientY, t: Date.now() }
+  }
+  const onFullscreenTouchMove = (e) => {
+    const t = e.touches[0]
+    const dx = t.clientX - fullscreenTouchStartRef.current.x
+    const dy = t.clientY - fullscreenTouchStartRef.current.y
+    // Prevent default for horizontal swipes to avoid page scrolling
+    if (Math.abs(dx) > Math.abs(dy)) e.preventDefault()
+  }
+  const onFullscreenTouchEnd = (e) => {
+    const start = fullscreenTouchStartRef.current
+    const end = e.changedTouches[0]
+    const dx = end.clientX - start.x
+    const dy = end.clientY - start.y
+    const adx = Math.abs(dx)
+    const ady = Math.abs(dy)
+    const dt = Date.now() - start.t
+    const THRESH = 50
+    const MAX_ANGLE = 0.57
+    const MIN_SWIPE_TIME = 100
+    const MAX_SWIPE_TIME = 800
+    
+    // Only process if swipe is fast enough and not too slow
+    if (dt < MIN_SWIPE_TIME || dt > MAX_SWIPE_TIME) return
+    
+    // Horizontal swipe (left/right) - change photo
+    if (adx > THRESH && (ady / (adx || 1)) < MAX_ANGLE) {
+      if (dx < 0) nextFullscreen(); else prevFullscreen()
+    }
+    // Vertical swipe down - exit fullscreen
+    else if (ady > THRESH && dy > 0 && (adx / (ady || 1)) < MAX_ANGLE) {
+      closeFullscreen()
+    }
+  }
+
   /* auth view switching */
   if (!authChecked) {
     return (
@@ -749,7 +846,9 @@ export default function App() {
   }
 
   const currentPhoto = viewer.open ? photos[viewer.index] : null
+  const currentFullscreenPhoto = fullscreen.open ? photos[fullscreen.index] : null
   const truncatedName = currentPhoto ? ellipsizeWords(currentPhoto.fname || '', 8) : ''
+  const truncatedFullscreenName = currentFullscreenPhoto ? ellipsizeWords(currentFullscreenPhoto.fname || '', 8) : ''
   const imgMaxHeight = isSmall && infoOpen
     ? `calc(100vh - ${HEADER_H}px - ${MOBILE_INFO_VH}vh - 24px)`
     : `calc(100vh - ${HEADER_H}px - 24px)`
@@ -1494,6 +1593,20 @@ export default function App() {
       )}
 
       {/* Fullscreen Viewer */}
+      {fullscreen.open && currentFullscreenPhoto && (
+        <FullscreenViewer
+          photo={currentFullscreenPhoto}
+          truncatedName={truncatedFullscreenName}
+          onPrev={prevFullscreen}
+          onNext={nextFullscreen}
+          onClose={closeFullscreen}
+          onTouchStart={onFullscreenTouchStart}
+          onTouchMove={onFullscreenTouchMove}
+          onTouchEnd={onFullscreenTouchEnd}
+        />
+      )}
+
+      {/* Regular Viewer */}
       {viewer.open && currentPhoto && (
         <Viewer
           isSmall={isSmall}
@@ -1508,6 +1621,7 @@ export default function App() {
           onDownload={downloadActive}
           ensureMeta={ensureMeta}
           meta={meta}
+          onFullscreen={() => openFullscreen(viewer.index)}
         />
       )}
     </GlassShell>
@@ -1828,7 +1942,7 @@ function InfoPanel({ meta, fallback }) {
 /* ----- Viewer ----- */
 function Viewer({
   isSmall, infoOpen, setInfoOpen, photo, truncatedName, imgMaxHeight,
-  onPrev, onNext, onClose, onDownload, ensureMeta, meta
+  onPrev, onNext, onClose, onDownload, ensureMeta, meta, onFullscreen
 }) {
   const [useFullRes, setUseFullRes] = useState(false)
   const [imageLoading, setImageLoading] = useState(true)
@@ -1918,16 +2032,25 @@ function Viewer({
           </div>
           <div className="ml-auto flex items-center gap-2">
             {!isVideo && (
-              <button
-                className={`px-3 py-1 rounded-full border border-white/10 ${useFullRes ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
-                onClick={() => {
-                  setUseFullRes(!useFullRes)
-                  setImageLoading(true)
-                }}
-                title={useFullRes ? 'Switch to Optimized view' : 'Switch to Original view'}
-              >
-                {useFullRes ? 'Original' : 'Optimized'}
-              </button>
+              <>
+                <button
+                  className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                  onClick={onFullscreen}
+                  title="Full screen"
+                >
+                  <Monitor className="w-5 h-5 text-white" />
+                </button>
+                <button
+                  className={`px-3 py-1 rounded-full border border-white/10 ${useFullRes ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
+                  onClick={() => {
+                    setUseFullRes(!useFullRes)
+                    setImageLoading(true)
+                  }}
+                  title={useFullRes ? 'Switch to Optimized view' : 'Switch to Original view'}
+                >
+                  {useFullRes ? 'Original' : 'Optimized'}
+                </button>
+              </>
             )}
             {isVideo && (
               <button
@@ -2019,6 +2142,83 @@ function Viewer({
         >
           <InfoPanel meta={meta} fallback={photo} />
         </aside>
+      )}
+    </div>
+  )
+}
+
+/* ----- Fullscreen Viewer ----- */
+function FullscreenViewer({
+  photo, truncatedName, onPrev, onNext, onClose, onTouchStart, onTouchMove, onTouchEnd
+}) {
+  const [useFullRes, setUseFullRes] = useState(false)
+  const [imageLoading, setImageLoading] = useState(true)
+  const isVideo = String(photo?.kind) === 'video'
+  const [quality, setQuality] = useState('reduced')
+  const [imageUrl, setImageUrl] = useState('')
+
+  // Reset loading state when photo changes
+  useEffect(() => {
+    setImageLoading(true)
+  }, [photo.id])
+
+  // Simplified image loading - use direct URLs with proper caching
+  useEffect(() => {
+    if (!photo?.id || isVideo) return
+    
+    const path = useFullRes ? `/media/${photo.id}` : `/view/${photo.id}`
+    const url = apiUrl(path)
+    
+    setImageUrl(url)
+    setImageLoading(true)
+  }, [photo.id, useFullRes, isVideo])
+
+  return (
+    <div 
+      className="fixed inset-0 bg-black z-[100] flex items-center justify-center"
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+    >
+      {imageLoading && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="w-12 h-12 border-4 border-white/30 border-t-white rounded-full animate-spin"></div>
+        </div>
+      )}
+
+      {isVideo ? (
+        <VideoPlayer
+          srcOriginal={apiUrl(`/media/${photo.id}`)}
+          srcHls={apiUrl(`/hls/${photo.id}/master.m3u8`)}
+          srcReduced={apiUrl(`/transcode/${photo.id}?q=720`)}
+          mode={quality}
+          style={{
+            maxHeight: '100vh',
+            maxWidth: '100vw',
+            width: '100%',
+            height: '100%',
+            objectFit: 'contain'
+          }}
+          poster={apiUrl(`/view/${photo.id}`)}
+          onLoad={() => setImageLoading(false)}
+          onError={() => setImageLoading(false)}
+        />
+      ) : (
+        imageUrl && (
+          <img
+            src={imageUrl}
+            alt={photo.fname}
+            style={{ 
+              maxHeight: '100vh', 
+              maxWidth: '100vw',
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain'
+            }}
+            onLoad={() => setImageLoading(false)}
+            onError={() => setImageLoading(false)}
+          />
+        )
       )}
     </div>
   )
