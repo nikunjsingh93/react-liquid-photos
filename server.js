@@ -1280,15 +1280,39 @@ app.get('/transcode/:id', requireAuth, async (req, res) => {
   }
   const preset = pickPreset()
 
+  // Check if source video is HEVC/H.265 and use appropriate codec
+  let videoCodec = 'libx264'
+  let videoProfile = 'main' // Use main profile for better compatibility
+  let videoLevel = '4.1'
+  let crfValue = preset.vcrf
+  
+  try {
+    const meta = await probeVideoMeta(abs)
+    console.log('[transcode] Video codec detection for:', abs, '->', meta?.codec || 'unknown')
+    if (meta && meta.codec === 'hevc') {
+      // Use HEVC/H.265 for better quality and compatibility with iPhone videos
+      videoCodec = 'libx265'
+      videoProfile = 'main'
+      videoLevel = '4.1'
+      // Adjust CRF for HEVC (HEVC CRF values are different from H.264)
+      crfValue = Math.max(20, preset.vcrf - 6) // HEVC typically needs lower CRF for same quality
+      console.log('[transcode] Using HEVC encoding with libx265, CRF:', crfValue)
+    } else {
+      console.log('[transcode] Using H.264 encoding with libx264, CRF:', crfValue)
+    }
+  } catch (e) {
+    console.warn('[transcode] Failed to detect video codec, using H.264:', e.message)
+  }
+
   // ffmpeg args for fragmented MP4 for progressive playback
   const args = [
     '-hide_banner', '-loglevel', 'error',
     '-i', abs,
-    // Force target height (e.g. 720p) with sharp downscaling
-    '-vf', `scale=-2:${preset.height}:flags=lanczos`,
+    // Force target height (e.g. 720p) with sharp downscaling and ensure 8-bit output
+    '-vf', `scale=-2:${preset.height}:flags=lanczos,format=yuv420p`,
     '-r', String(preset.fps),
-    '-c:v', 'libx264', '-preset', 'medium', '-crf', String(preset.vcrf),
-    '-profile:v', 'high', '-level', '4.1', '-pix_fmt', 'yuv420p',
+    '-c:v', videoCodec, '-preset', 'medium', '-crf', String(crfValue),
+    '-profile:v', videoProfile, '-level', videoLevel, '-pix_fmt', 'yuv420p',
     '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',
     '-maxrate', preset.vmax, '-bufsize', preset.vbuf,
     '-c:a', 'aac', '-ac', '2', '-b:a', preset.abitrate,
@@ -1300,13 +1324,50 @@ app.get('/transcode/:id', requireAuth, async (req, res) => {
   res.setHeader('Cache-Control', 'no-store')
   const ex = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] })
   ex.stdout.pipe(res)
-  ex.stderr.on('data', () => {})
+  let stderrBuf = ''
+  ex.stderr.on('data', (d) => { stderrBuf += String(d) })
   const cleanup = () => { try { ex.kill('SIGKILL') } catch {} }
   res.on('close', cleanup)
   res.on('finish', cleanup)
   ex.on('close', (code) => {
     if (code !== 0) {
-      try { if (!res.headersSent) res.status(500).end() } catch {}
+      // If HEVC encoding failed, try fallback to H.264
+      if (videoCodec === 'libx265' && !res.headersSent) {
+        console.warn('[transcode] HEVC encoding failed, trying H.264 fallback for:', abs)
+        try {
+          // Retry with H.264
+          const fallbackArgs = [
+            '-hide_banner', '-loglevel', 'error',
+            '-i', abs,
+            '-vf', `scale=-2:${preset.height}:flags=lanczos`,
+            '-r', String(preset.fps),
+            '-c:v', 'libx264', '-preset', 'medium', '-crf', String(preset.vcrf),
+            '-profile:v', 'high', '-level', '4.1', '-pix_fmt', 'yuv420p',
+            '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',
+            '-maxrate', preset.vmax, '-bufsize', preset.vbuf,
+            '-c:a', 'aac', '-ac', '2', '-b:a', preset.abitrate,
+            '-movflags', 'frag_keyframe+empty_moov+faststart', '-f', 'mp4', 'pipe:1'
+          ]
+          
+          const fallbackEx = spawn('ffmpeg', fallbackArgs, { stdio: ['ignore', 'pipe', 'pipe'] })
+          fallbackEx.stdout.pipe(res)
+          fallbackEx.stderr.on('data', () => {})
+          const fallbackCleanup = () => { try { fallbackEx.kill('SIGKILL') } catch {} }
+          res.on('close', fallbackCleanup)
+          res.on('finish', fallbackCleanup)
+          fallbackEx.on('close', (fallbackCode) => {
+            if (fallbackCode !== 0) {
+              try { if (!res.headersSent) res.status(500).end() } catch {}
+            }
+          })
+          fallbackEx.on('error', () => { try { if (!res.headersSent) res.status(500).end() } catch {} })
+        } catch (fallbackError) {
+          console.error('[transcode] H.264 fallback also failed:', fallbackError.message)
+          try { if (!res.headersSent) res.status(500).end() } catch {}
+        }
+      } else {
+        try { if (!res.headersSent) res.status(500).end() } catch {}
+      }
     }
   })
   ex.on('error', () => { try { res.status(500).end() } catch {} })
@@ -1355,6 +1416,27 @@ app.get('/hls/:id/:height.m3u8', requireAuth, async (req, res) => {
   // Prepare directory
   await fsp.mkdir(outDir, { recursive: true })
 
+  // Check if source video is HEVC/H.265 and use appropriate codec
+  let videoCodec = 'libx264'
+  let videoProfile = 'high'
+  let videoLevel = '4.1'
+  let crfValue = 20
+  
+  try {
+    const meta = await probeVideoMeta(abs)
+    console.log('[hls] Video codec detection for:', abs, '->', meta?.codec || 'unknown')
+    // For HLS, always use H.264 for better compatibility and faster encoding
+    // HEVC will be used in the transcode endpoint for direct playback
+    videoCodec = 'libx264'
+    // Use main profile for better compatibility with 10-bit sources
+    videoProfile = 'main'
+    videoLevel = '4.1'
+    crfValue = 20
+    console.log('[hls] Using H.264 encoding with libx264 for HLS compatibility, CRF:', crfValue)
+  } catch (e) {
+    console.warn('[hls] Failed to detect video codec, using H.264:', e.message)
+  }
+
   // Bitrate ladder approximation
   const cfg = height <= 360
     ? { maxrate: '700k', buf: '1400k', abr: '64k' }
@@ -1364,8 +1446,9 @@ app.get('/hls/:id/:height.m3u8', requireAuth, async (req, res) => {
   const args = [
     '-hide_banner', '-loglevel', 'error', '-y',
     '-i', abs,
-    '-vf', `scale=-2:${height}:flags=lanczos`,
-    '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'high', '-level', '4.1', '-crf', '20',
+    '-vf', `scale=-2:${height}:flags=lanczos,format=yuv420p`,
+    '-c:v', videoCodec, '-preset', 'veryfast', '-profile:v', videoProfile, '-level', videoLevel, '-crf', String(crfValue),
+
     '-maxrate', cfg.maxrate, '-bufsize', cfg.buf,
     '-c:a', 'aac', '-ac', '2', '-b:a', cfg.abr,
     '-f', 'hls',
@@ -1377,19 +1460,27 @@ app.get('/hls/:id/:height.m3u8', requireAuth, async (req, res) => {
 
   // Launch ffmpeg and immediately tail the playlist when it appears
   const ex = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] })
-  ex.stderr.on('data', () => {})
-  ex.on('error', () => {})
+  let stderrBuf = ''
+  ex.stderr.on('data', (d) => { stderrBuf += String(d) })
+  ex.on('error', (err) => {
+    console.error('[hls] FFmpeg spawn error:', err.message)
+  })
 
   // Poll for playlist existence, then stream it
   const start = Date.now()
   const poll = setInterval(async () => {
     if (await fileExists(indexPath)) {
       clearInterval(poll)
+      console.log('[hls] HLS playlist generated successfully for:', abs)
       res.setHeader('Content-Type', 'application/x-mpegURL')
       fs.createReadStream(indexPath).pipe(res)
     } else if (Date.now() - start > 8000) {
       clearInterval(poll)
       try { ex.kill('SIGKILL') } catch {}
+      
+      // Log the error and return 500
+      console.error('[hls] HLS generation failed for:', abs)
+      console.error('[hls] FFmpeg stderr output:', stderrBuf.slice(-500))
       res.status(500).end()
     }
   }, 200)
@@ -1505,7 +1596,7 @@ async function probeVideoMeta(absPath) {
   return new Promise((resolve) => {
     const args = [
       '-v', 'error',
-      '-show_entries', 'stream=codec_type,width,height,nb_frames,avg_frame_rate,duration:format=duration',
+      '-show_entries', 'stream=codec_type,width,height,nb_frames,avg_frame_rate,duration,codec_name:format=duration',
       '-of', 'json',
       absPath
     ]
@@ -1545,7 +1636,8 @@ async function probeVideoMeta(absPath) {
         }
         const width = Number(vstream.width || 0)
         const height = Number(vstream.height || 0)
-        resolve({ width, height, format: 'video', duration: Math.floor(durationSec * 1000) })
+        const codec = String(vstream.codec_name || '').toLowerCase()
+        resolve({ width, height, format: 'video', duration: Math.floor(durationSec * 1000), codec })
       } catch {
         resolve(null)
       }
@@ -1629,6 +1721,30 @@ if (fs.existsSync(DIST_DIR)) {
     res.sendFile(path.join(DIST_DIR, 'index.html'))
   })
 }
+
+/* Debug endpoint for testing video codec detection */
+app.get('/api/debug/video/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id)
+    const row = db.prepare('SELECT path, folder, kind FROM images WHERE id=?').get(id)
+    if (!row) return res.status(404).json({ error: 'not found' })
+    if (!inScope(req.user.root_path || '', row.folder)) return res.status(403).json({ error: 'forbidden' })
+    if (row.kind !== 'video') return res.status(400).json({ error: 'not a video' })
+    
+    const abs = path.join(PHOTOS_ROOT, row.path)
+    const meta = await probeVideoMeta(abs)
+    
+    res.json({
+      id,
+      path: row.path,
+      meta,
+      hevcSupported: meta?.codec === 'hevc',
+      recommendedCodec: meta?.codec === 'hevc' ? 'libx265' : 'libx264'
+    })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
 
 /* Debug 404 (keep last) */
 app.use('*', (req, res) => {
