@@ -370,9 +370,6 @@ export default function App() {
   const metaCacheRef = useRef(new Map())
   const [meta, setMeta] = useState(null)
 
-  // Full screen state
-  const [fullscreen, setFullscreen] = useState({ open: false, index: 0 })
-
   // Multi-select
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState(new Set())
@@ -587,8 +584,7 @@ export default function App() {
   // Full screen helpers
   const openFullscreen = (idx) => {
     if (!selectMode) {
-      setFullscreen({ open: true, index: idx })
-      setViewer({ open: false, index: 0 })
+      setViewer({ open: true, index: idx })
       setInfoOpen(false)
       // Request browser fullscreen
       if (document.documentElement.requestFullscreen) {
@@ -601,7 +597,7 @@ export default function App() {
     }
   }
   const closeFullscreen = () => { 
-    setFullscreen({ open: false, index: 0 })
+    setViewer({ open: false, index: 0 })
     // Exit browser fullscreen
     if (document.exitFullscreen) {
       document.exitFullscreen()
@@ -611,8 +607,18 @@ export default function App() {
       document.msExitFullscreen()
     }
   }
-  const nextFullscreen = () => setFullscreen(f => ({ ...f, index: Math.min(f.index + 1, photos.length - 1) }))
-  const prevFullscreen = () => setFullscreen(f => ({ ...f, index: Math.max(f.index - 1, 0) }))
+  const exitBrowserFullscreen = () => {
+    // Only exit browser fullscreen, keep viewer open
+    if (document.exitFullscreen) {
+      document.exitFullscreen()
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen()
+    } else if (document.msExitFullscreen) {
+      document.msExitFullscreen()
+    }
+  }
+  const nextFullscreen = () => setViewer(v => ({ ...v, index: Math.min(v.index + 1, photos.length - 1) }))
+  const prevFullscreen = () => setViewer(v => ({ ...v, index: Math.max(v.index - 1, 0) }))
 
   // meta
   const ensureMeta = useCallback(async (id) => {
@@ -644,26 +650,29 @@ export default function App() {
   // keys
   useEffect(() => {
     const onKey = (e) => {
-      if (fullscreen.open) {
-        if (e.key === 'Escape') closeFullscreen()
-        if (e.key === 'ArrowRight') nextFullscreen()
-        if (e.key === 'ArrowLeft') prevFullscreen()
-      } else if (viewer.open) {
-        if (e.key === 'Escape') closeViewer()
+      if (viewer.open) {
+        if (e.key === 'Escape') {
+          // Check if we're in browser fullscreen mode
+          const isBrowserFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement)
+          if (isBrowserFullscreen) {
+            exitBrowserFullscreen()
+          } else {
+            closeViewer()
+          }
+        }
         if (e.key === 'ArrowRight') next()
         if (e.key === 'ArrowLeft') prev()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [fullscreen.open, viewer.open, photos.length])
+  }, [viewer.open, photos.length])
 
   // Handle fullscreen change events
   useEffect(() => {
     const handleFullscreenChange = () => {
       if (!document.fullscreenElement && !document.webkitFullscreenElement && !document.msFullscreenElement) {
-        // User exited fullscreen, close our fullscreen viewer
-        setFullscreen({ open: false, index: 0 })
+        // User exited browser fullscreen, viewer stays open with UI
       }
     }
 
@@ -720,6 +729,9 @@ export default function App() {
     // Only process if swipe is fast enough and not too slow
     if (dt < MIN_SWIPE_TIME || dt > MAX_SWIPE_TIME) return
     
+    // Check if we're in browser fullscreen mode
+    const isBrowserFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement)
+    
     // Horizontal swipe (left/right) - change photo
     if (adx > THRESH && (ady / (adx || 1)) < MAX_ANGLE) {
       if (dx < 0) next(); else prev()
@@ -733,6 +745,9 @@ export default function App() {
         // Swipe down - close info panel or close viewer
         if (infoOpen) {
           setInfoOpen(false)
+        } else if (isBrowserFullscreen) {
+          // Exit browser fullscreen if in fullscreen mode
+          exitBrowserFullscreen()
         } else {
           closeViewer()
         }
@@ -779,44 +794,7 @@ export default function App() {
     }
   }
 
-  // touch swipe for fullscreen
-  const fullscreenTouchStartRef = useRef({ x: 0, y: 0, t: 0 })
-  const onFullscreenTouchStart = (e) => {
-    const t = e.touches[0]
-    fullscreenTouchStartRef.current = { x: t.clientX, y: t.clientY, t: Date.now() }
-  }
-  const onFullscreenTouchMove = (e) => {
-    const t = e.touches[0]
-    const dx = t.clientX - fullscreenTouchStartRef.current.x
-    const dy = t.clientY - fullscreenTouchStartRef.current.y
-    // Prevent default for horizontal swipes to avoid page scrolling
-    if (Math.abs(dx) > Math.abs(dy)) e.preventDefault()
-  }
-  const onFullscreenTouchEnd = (e) => {
-    const start = fullscreenTouchStartRef.current
-    const end = e.changedTouches[0]
-    const dx = end.clientX - start.x
-    const dy = end.clientY - start.y
-    const adx = Math.abs(dx)
-    const ady = Math.abs(dy)
-    const dt = Date.now() - start.t
-    const THRESH = 50
-    const MAX_ANGLE = 0.57
-    const MIN_SWIPE_TIME = 100
-    const MAX_SWIPE_TIME = 800
-    
-    // Only process if swipe is fast enough and not too slow
-    if (dt < MIN_SWIPE_TIME || dt > MAX_SWIPE_TIME) return
-    
-    // Horizontal swipe (left/right) - change photo
-    if (adx > THRESH && (ady / (adx || 1)) < MAX_ANGLE) {
-      if (dx < 0) nextFullscreen(); else prevFullscreen()
-    }
-    // Vertical swipe down - exit fullscreen
-    else if (ady > THRESH && dy > 0 && (adx / (ady || 1)) < MAX_ANGLE) {
-      closeFullscreen()
-    }
-  }
+
 
   /* auth view switching */
   if (!authChecked) {
@@ -846,9 +824,7 @@ export default function App() {
   }
 
   const currentPhoto = viewer.open ? photos[viewer.index] : null
-  const currentFullscreenPhoto = fullscreen.open ? photos[fullscreen.index] : null
   const truncatedName = currentPhoto ? ellipsizeWords(currentPhoto.fname || '', 8) : ''
-  const truncatedFullscreenName = currentFullscreenPhoto ? ellipsizeWords(currentFullscreenPhoto.fname || '', 8) : ''
   const imgMaxHeight = isSmall && infoOpen
     ? `calc(100vh - ${HEADER_H}px - ${MOBILE_INFO_VH}vh - 24px)`
     : `calc(100vh - ${HEADER_H}px - 24px)`
@@ -1592,38 +1568,27 @@ export default function App() {
         </div>
       )}
 
-      {/* Fullscreen Viewer */}
-      {fullscreen.open && currentFullscreenPhoto && (
-        <FullscreenViewer
-          photo={currentFullscreenPhoto}
-          truncatedName={truncatedFullscreenName}
-          onPrev={prevFullscreen}
-          onNext={nextFullscreen}
-          onClose={closeFullscreen}
-          onTouchStart={onFullscreenTouchStart}
-          onTouchMove={onFullscreenTouchMove}
-          onTouchEnd={onFullscreenTouchEnd}
-        />
-      )}
-
-      {/* Regular Viewer */}
-      {viewer.open && currentPhoto && (
-        <Viewer
-          isSmall={isSmall}
-          infoOpen={infoOpen}
-          setInfoOpen={setInfoOpen}
-          photo={currentPhoto}
-          truncatedName={truncatedName}
-          imgMaxHeight={imgMaxHeight}
-          onPrev={prev}
-          onNext={next}
-          onClose={closeViewer}
-          onDownload={downloadActive}
-          ensureMeta={ensureMeta}
-          meta={meta}
-          onFullscreen={() => openFullscreen(viewer.index)}
-        />
-      )}
+                          {/* Viewer */}
+          {viewer.open && currentPhoto && (
+            <Viewer
+              isSmall={isSmall}
+              infoOpen={infoOpen}
+              setInfoOpen={setInfoOpen}
+              photo={currentPhoto}
+              truncatedName={truncatedName}
+              imgMaxHeight={imgMaxHeight}
+              onPrev={prev}
+              onNext={next}
+              onClose={closeViewer}
+              onDownload={downloadActive}
+              ensureMeta={ensureMeta}
+              meta={meta}
+              onFullscreen={() => openFullscreen(viewer.index)}
+              onTouchStart={onTouchStart}
+              onTouchMove={onTouchMove}
+              onTouchEnd={onTouchEnd}
+            />
+          )}
     </GlassShell>
   )
 }
@@ -1942,18 +1907,44 @@ function InfoPanel({ meta, fallback }) {
 /* ----- Viewer ----- */
 function Viewer({
   isSmall, infoOpen, setInfoOpen, photo, truncatedName, imgMaxHeight,
-  onPrev, onNext, onClose, onDownload, ensureMeta, meta, onFullscreen
+  onPrev, onNext, onClose, onDownload, ensureMeta, meta, onFullscreen,
+  onTouchStart, onTouchMove, onTouchEnd
 }) {
   const [useFullRes, setUseFullRes] = useState(false)
   const [imageLoading, setImageLoading] = useState(true)
   const isVideo = String(photo?.kind) === 'video'
   const [quality, setQuality] = useState('reduced') // 'original' | 'reduced'
   const [imageUrl, setImageUrl] = useState('')
+  const [isBrowserFullscreen, setIsBrowserFullscreen] = useState(false)
 
   // Reset loading state when photo changes
   useEffect(() => {
     setImageLoading(true)
   }, [photo.id])
+
+  // Check if we're in browser fullscreen mode
+  useEffect(() => {
+    const checkFullscreen = () => {
+      const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement)
+      setIsBrowserFullscreen(isFullscreen)
+    }
+    
+    checkFullscreen()
+    
+    const handleFullscreenChange = () => {
+      checkFullscreen()
+    }
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
+    document.addEventListener('msfullscreenchange', handleFullscreenChange)
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
+      document.removeEventListener('msfullscreenchange', handleFullscreenChange)
+    }
+  }, [])
 
   // Simplified image loading - use direct URLs with proper caching
   useEffect(() => {
@@ -1966,130 +1957,93 @@ function Viewer({
     setImageLoading(true)
   }, [photo.id, useFullRes, isVideo])
 
-  // Touch swipe handlers
-  const touchStartRef = useRef({ x: 0, y: 0, t: 0 })
-  const onTouchStart = (e) => {
-    const t = e.touches[0]
-    touchStartRef.current = { x: t.clientX, y: t.clientY, t: Date.now() }
-  }
-  const onTouchMove = (e) => {
-    const t = e.touches[0]
-    const dx = t.clientX - touchStartRef.current.x
-    const dy = t.clientY - touchStartRef.current.y
-    // Prevent default for horizontal swipes to avoid page scrolling
-    if (Math.abs(dx) > Math.abs(dy)) e.preventDefault()
-  }
-  const onTouchEnd = (e) => {
-    const start = touchStartRef.current
-    const end = e.changedTouches[0]
-    const dx = end.clientX - start.x
-    const dy = end.clientY - start.y
-    const adx = Math.abs(dx)
-    const ady = Math.abs(dy)
-    const dt = Date.now() - start.t
-    const THRESH = 50
-    const MAX_ANGLE = 0.57
-    const MIN_SWIPE_TIME = 100
-    const MAX_SWIPE_TIME = 800
-    
-    // Only process if swipe is fast enough and not too slow
-    if (dt < MIN_SWIPE_TIME || dt > MAX_SWIPE_TIME) return
-    
-    // Horizontal swipe (left/right) - change photo
-    if (adx > THRESH && (ady / (adx || 1)) < MAX_ANGLE) {
-      if (dx < 0) onNext(); else onPrev()
-    }
-    // Vertical swipe (up/down) - info panel and close
-    else if (ady > THRESH && (adx / (ady || 1)) < MAX_ANGLE) {
-      if (dy < 0) {
-        // Swipe up - open info panel
-        setInfoOpen(true)
-      } else {
-        // Swipe down - close info panel or close viewer
-        if (infoOpen) {
-          setInfoOpen(false)
-        } else {
-          onClose()
-        }
-      }
-    }
-  }
+
+
   return (
     <div 
-      className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex"
+      className={`fixed inset-0 z-50 flex ${isBrowserFullscreen ? 'bg-black' : 'bg-black/80 backdrop-blur-sm'}`}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
     >
       <div className="flex-1 flex flex-col">
-        <div className="relative flex items-center px-4" style={{ height: HEADER_H }}>
-          <div className="pointer-events-none sm:absolute sm:left-1/2 sm:-translate-x-1/2 sm:text-center sm:max-w-[60vw] min-w-0 flex-1">
-            {(isVideo || imageUrl) && (
-              <div className="truncate text-sm text-white text-left sm:text-center">
-                {truncatedName}
-              </div>
-            )}
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            {!isVideo && (
-              <>
+        {/* Show header only when NOT in browser fullscreen mode */}
+        {!isBrowserFullscreen && (
+          <div className="relative flex items-center px-4" style={{ height: HEADER_H }}>
+            <div className="pointer-events-none sm:absolute sm:left-1/2 sm:-translate-x-1/2 sm:text-center sm:max-w-[60vw] min-w-0 flex-1">
+              {(isVideo || imageUrl) && (
+                <div className="truncate text-sm text-white text-left sm:text-center">
+                  {truncatedName}
+                </div>
+              )}
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              {!isVideo && (
+                <>
+                  <button
+                    className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                    onClick={onFullscreen}
+                    title="Full screen"
+                  >
+                    <Monitor className="w-5 h-5 text-white" />
+                  </button>
+                  <button
+                    className={`px-3 py-1 rounded-full border border-white/10 ${useFullRes ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
+                    onClick={() => {
+                      setUseFullRes(!useFullRes)
+                      setImageLoading(true)
+                    }}
+                    title={useFullRes ? 'Switch to Optimized view' : 'Switch to Original view'}
+                  >
+                    {useFullRes ? 'Original' : 'Optimized'}
+                  </button>
+                </>
+              )}
+              {isVideo && (
                 <button
-                  className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
-                  onClick={onFullscreen}
-                  title="Full screen"
-                >
-                  <Monitor className="w-5 h-5 text-white" />
-                </button>
-                <button
-                  className={`px-3 py-1 rounded-full border border-white/10 ${useFullRes ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
+                  className={`px-3 py-1 rounded-full border border-white/10 ${quality ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
                   onClick={() => {
-                    setUseFullRes(!useFullRes)
+                    setQuality(q => (q === 'original' ? 'reduced' : 'original'))
                     setImageLoading(true)
                   }}
-                  title={useFullRes ? 'Switch to Optimized view' : 'Switch to Original view'}
+                  title={quality === 'original' ? 'Tap to switch to Optimized' : 'Tap to switch to Original'}
                 >
-                  {useFullRes ? 'Original' : 'Optimized'}
+                  {quality === 'original' ? 'Original' : 'Optimized'}
                 </button>
-              </>
-            )}
-            {isVideo && (
+              )}
               <button
-                className={`px-3 py-1 rounded-full border border-white/10 ${quality ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
-                onClick={() => {
-                  setQuality(q => (q === 'original' ? 'reduced' : 'original'))
-                  setImageLoading(true)
-                }}
-                title={quality === 'original' ? 'Tap to switch to Optimized' : 'Tap to switch to Original'}
+                className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                onClick={async () => { setInfoOpen(v => !v); if (!infoOpen) await ensureMeta(photo.id) }}
+                title="Info"
               >
-                {quality === 'original' ? 'Original' : 'Optimized'}
+                <Info className="w-6 h-6 text-white" />
               </button>
-            )}
-            <button
-              className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
-              onClick={async () => { setInfoOpen(v => !v); if (!infoOpen) await ensureMeta(photo.id) }}
-              title="Info"
-            >
-              <Info className="w-6 h-6 text-white" />
-            </button>
-            <button
-              className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
-              onClick={onDownload}
-              title="Download"
-            >
-              <Download className="w-6 h-6 text-white" />
-            </button>
-            <button
-              className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
-              onClick={onClose}
-              title="Close"
-            >
-              <X className="w-6 h-6 text-white" />
-            </button>
+              <button
+                className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                onClick={onDownload}
+                title="Download"
+              >
+                <Download className="w-6 h-6 text-white" />
+              </button>
+              <button
+                className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                onClick={onClose}
+                title="Close"
+              >
+                <X className="w-6 h-6 text-white" />
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="relative flex-1 flex items-center justify-center px-3 pb-3">
-          <button className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={onPrev}>◀</button>
+          {/* Show navigation buttons only when NOT in browser fullscreen mode */}
+          {!isBrowserFullscreen && (
+            <>
+              <button className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={onPrev}>◀</button>
+              <button className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={onNext}>▶</button>
+            </>
+          )}
 
           {imageLoading && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -2104,8 +2058,8 @@ function Viewer({
               srcReduced={apiUrl(`/transcode/${photo.id}?q=720`)}
               mode={quality}
               style={{
-                maxHeight: imgMaxHeight,
-                maxWidth: isSmall && infoOpen ? '94vw' : '92vw',
+                maxHeight: isBrowserFullscreen ? '100vh' : imgMaxHeight,
+                maxWidth: isBrowserFullscreen ? '100vw' : (isSmall && infoOpen ? '94vw' : '92vw'),
                 width: '100%',
                 height: 'auto',
                 objectFit: 'contain'
@@ -2119,23 +2073,28 @@ function Viewer({
               <img
                 src={imageUrl}
                 alt={photo.fname}
-                style={{ maxHeight: imgMaxHeight, maxWidth: isSmall && infoOpen ? '94vw' : '92vw' }}
+                style={{ 
+                  maxHeight: isBrowserFullscreen ? '100vh' : imgMaxHeight, 
+                  maxWidth: isBrowserFullscreen ? '100vw' : (isSmall && infoOpen ? '94vw' : '92vw'),
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain'
+                }}
                 onLoad={() => setImageLoading(false)}
                 onError={() => setImageLoading(false)}
               />
             )
           )}
-
-          <button className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={onNext}>▶</button>
         </div>
       </div>
 
-      {!isSmall && infoOpen && (
+      {/* Show info panel only when NOT in browser fullscreen mode */}
+      {!isBrowserFullscreen && !isSmall && infoOpen && (
         <aside className="w-[340px] max-w-[80vw] border-l border-white/10 bg-zinc-950/95 backdrop-blur px-4 py-4 overflow-auto">
           <InfoPanel meta={meta} fallback={photo} />
         </aside>
       )}
-      {isSmall && infoOpen && (
+      {!isBrowserFullscreen && isSmall && infoOpen && (
         <aside
           className="fixed bottom-0 left-0 right-0 z-[60] border-t border-white/10 bg-zinc-950/95 backdrop-blur px-4 py-3 overflow-auto"
           style={{ height: `${MOBILE_INFO_VH}vh` }}
@@ -2147,79 +2106,3 @@ function Viewer({
   )
 }
 
-/* ----- Fullscreen Viewer ----- */
-function FullscreenViewer({
-  photo, truncatedName, onPrev, onNext, onClose, onTouchStart, onTouchMove, onTouchEnd
-}) {
-  const [useFullRes, setUseFullRes] = useState(false)
-  const [imageLoading, setImageLoading] = useState(true)
-  const isVideo = String(photo?.kind) === 'video'
-  const [quality, setQuality] = useState('reduced')
-  const [imageUrl, setImageUrl] = useState('')
-
-  // Reset loading state when photo changes
-  useEffect(() => {
-    setImageLoading(true)
-  }, [photo.id])
-
-  // Simplified image loading - use direct URLs with proper caching
-  useEffect(() => {
-    if (!photo?.id || isVideo) return
-    
-    const path = useFullRes ? `/media/${photo.id}` : `/view/${photo.id}`
-    const url = apiUrl(path)
-    
-    setImageUrl(url)
-    setImageLoading(true)
-  }, [photo.id, useFullRes, isVideo])
-
-  return (
-    <div 
-      className="fixed inset-0 bg-black z-[100] flex items-center justify-center"
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-    >
-      {imageLoading && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="w-12 h-12 border-4 border-white/30 border-t-white rounded-full animate-spin"></div>
-        </div>
-      )}
-
-      {isVideo ? (
-        <VideoPlayer
-          srcOriginal={apiUrl(`/media/${photo.id}`)}
-          srcHls={apiUrl(`/hls/${photo.id}/master.m3u8`)}
-          srcReduced={apiUrl(`/transcode/${photo.id}?q=720`)}
-          mode={quality}
-          style={{
-            maxHeight: '100vh',
-            maxWidth: '100vw',
-            width: '100%',
-            height: '100%',
-            objectFit: 'contain'
-          }}
-          poster={apiUrl(`/view/${photo.id}`)}
-          onLoad={() => setImageLoading(false)}
-          onError={() => setImageLoading(false)}
-        />
-      ) : (
-        imageUrl && (
-          <img
-            src={imageUrl}
-            alt={photo.fname}
-            style={{ 
-              maxHeight: '100vh', 
-              maxWidth: '100vw',
-              width: '100%',
-              height: '100%',
-              objectFit: 'contain'
-            }}
-            onLoad={() => setImageLoading(false)}
-            onError={() => setImageLoading(false)}
-          />
-        )
-      )}
-    </div>
-  )
-}
