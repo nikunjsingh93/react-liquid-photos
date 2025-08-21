@@ -774,6 +774,11 @@ const deleteShareStmt = db.prepare(`DELETE FROM shares WHERE id = ?`)
 const getShareById = db.prepare(`SELECT id, token, user_id, folder, name, created_at FROM shares WHERE id = ?`)
 const getShareByToken = db.prepare(`SELECT id, token, user_id, folder, name, created_at FROM shares WHERE token = ?`)
 const listSharesByUser = db.prepare(`SELECT id, token, user_id, folder, name, created_at FROM shares WHERE user_id = ? ORDER BY created_at DESC`)
+const listSharesWithUsers = db.prepare(`
+  SELECT s.id, s.token, s.user_id, s.folder, s.name, s.created_at, u.username
+  FROM shares s JOIN users u ON u.id = s.user_id
+  ORDER BY s.created_at DESC
+`)
 
 /* admin bootstrap */
 function normalizeScopeInput(input) {
@@ -1165,9 +1170,17 @@ app.post('/api/shares', requireAuth, (req, res) => {
 
 app.get('/api/shares', requireAuth, (req, res) => {
   try {
-    const rows = listSharesByUser.all(req.user.id)
-    const items = rows.map(r => ({ ...r, urlPath: `/s/${r.token}` }))
-    res.json({ items })
+    const includeAll = String(req.query.all || '0') === '1'
+    if (includeAll) {
+      if (!req.user?.is_admin) return res.status(403).json({ error: 'admin only' })
+      const rows = listSharesWithUsers.all()
+      const items = rows.map(r => ({ ...r, urlPath: `/s/${r.token}` }))
+      return res.json({ items })
+    } else {
+      const rows = listSharesByUser.all(req.user.id)
+      const items = rows.map(r => ({ ...r, urlPath: `/s/${r.token}` }))
+      return res.json({ items })
+    }
   } catch (e) {
     res.status(500).json({ error: e.message })
   }

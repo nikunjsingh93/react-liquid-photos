@@ -58,7 +58,7 @@ const API = {
   scanStatus: async () =>
     (await fetch(apiUrl('/api/index/status'), { credentials: 'include' })).json(),
   /* shares (auth) */
-  sharesList: async () => (await fetch(apiUrl('/api/shares'), { credentials: 'include' })).json(),
+  sharesList: async (all = false) => (await fetch(apiUrl(`/api/shares${all ? '?all=1' : ''}`), { credentials: 'include' })).json(),
   shareCreate: async (folder, name) => (await fetch(apiUrl('/api/shares'), {
     method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folder, name })
   })).json(),
@@ -423,6 +423,14 @@ export default function App() {
 
   // Thumbnail loading states
   const [loadedThumbnails, setLoadedThumbnails] = useState(new Set())
+
+  // Inline toast
+  const [toast, setToast] = useState({ message: '', visible: false })
+  const showToast = useCallback((message) => {
+    setToast({ message, visible: true })
+    window.clearTimeout(showToast._t)
+    showToast._t = window.setTimeout(() => setToast({ message: '', visible: false }), 1800)
+  }, [])
 
   const loadScanTree = useCallback(async () => {
     try {
@@ -905,6 +913,12 @@ export default function App() {
 
   return (
     <GlassShell>
+      {/* Inline toast */}
+      {toast.visible && (
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[10000] px-3 py-1.5 rounded bg-white/10 border border-white/10 text-xs text-slate-100 shadow">
+          {toast.message}
+        </div>
+      )}
       {!isShareMode && view === 'admin' ? (
         <AdminPanel user={user} onClose={() => setView('photos')} />
       ) : (
@@ -1183,15 +1197,20 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Multiselect toggle */}
-                <button
-                  className={`inline-flex items-center gap-2 px-2 py-1 rounded border ${selectMode ? 'bg-white/20 border-white/20' : 'bg-white/10 border-white/10 hover:bg-white/15'}`}
-                  onClick={() => setSelectMode(v => { const nv = !v; if (!nv) setSelectedIds(new Set()); return nv })}
-                  title="Multi-select"
-                >
-                  <CheckSquare className="w-4 h-4" />
-                  <span className="text-xs hidden sm:block">Select</span>
-                </button>
+                {/* Multiselect toggle + shared album name */}
+                <div className="flex items-center gap-2">
+                  <button
+                    className={`inline-flex items-center gap-2 px-2 py-1 rounded border ${selectMode ? 'bg-white/20 border-white/20' : 'bg-white/10 border-white/10 hover:bg-white/15'}`}
+                    onClick={() => setSelectMode(v => { const nv = !v; if (!nv) setSelectedIds(new Set()); return nv })}
+                    title="Multi-select"
+                  >
+                    <CheckSquare className="w-4 h-4" />
+                    <span className="text-xs hidden sm:block">Select</span>
+                  </button>
+                  {isShareMode && shareInfo?.name && (
+                    <div className="max-w-[40vw] truncate text-xs text-slate-200" title={shareInfo.name}>{shareInfo.name}</div>
+                  )}
+                </div>
 
                 {/* Filter: Photos/Videos */}
                 {!isShareMode && (
@@ -1283,8 +1302,7 @@ export default function App() {
                                 const r = await API.shareCreate(selected, folderName)
                                 if (!r?.token) throw new Error(r?.error || 'Share failed')
                                 const full = `${window.location.origin}${r.urlPath}`
-                                try { await navigator.clipboard.writeText(full) } catch {}
-                                window.open(r.urlPath, '_blank')
+                                try { await navigator.clipboard.writeText(full); showToast('Link copied to clipboard') } catch { showToast('Copy failed; please copy from modal'); }
                                 setShareOpen(false)
                               } catch (e) {
                                 alert(e?.message || 'Failed to create share')
@@ -2050,6 +2068,8 @@ function AdminPanel({ user, onClose }) {
   const [form, setForm] = useState({ username: '', password: '', path: '', isAdmin: false })
   const [creating, setCreating] = useState(false)
   const [deletingId, setDeletingId] = useState(0)
+  const [allShares, setAllShares] = useState([])
+  const [loadingShares, setLoadingShares] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true); setError('')
@@ -2064,6 +2084,20 @@ function AdminPanel({ user, onClose }) {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  const loadAllShares = useCallback(async () => {
+    setLoadingShares(true)
+    try {
+      const r = await API.sharesList(true)
+      setAllShares(Array.isArray(r?.items) ? r.items : [])
+    } catch {
+      setAllShares([])
+    } finally {
+      setLoadingShares(false)
+    }
+  }, [])
+
+  useEffect(() => { if (user?.is_admin) { loadAllShares() } }, [user?.is_admin, loadAllShares])
 
   const createUser = async () => {
     if (!form.username || !form.password) { setError('Username and password required'); return }
@@ -2177,6 +2211,36 @@ function AdminPanel({ user, onClose }) {
                   )
                 })}
                 {list.length === 0 && <div className="text-slate-400 text-sm">No users yet.</div>}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white/5 border border-white/10 rounded-xl p-3 sm:col-span-2">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="text-sm font-semibold">All Shares</div>
+              <button className="ml-auto text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15" onClick={loadAllShares}>Refresh</button>
+            </div>
+            {loadingShares ? (
+              <div className="text-slate-400 text-sm">Loading shares…</div>
+            ) : (
+              <div className="space-y-2 text-sm">
+                {allShares.map(s => (
+                  <div key={s.id} className="rounded border border-white/10 p-2">
+                    <div className="flex items-center gap-2">
+                      <div className="font-medium truncate">{s.name}</div>
+                      <div className="text-xs text-slate-400 truncate">{s.folder}</div>
+                      <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-400/30">{s.username || 'user ' + s.user_id}</span>
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <a className="text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15" href={s.urlPath || `/s/${s.token}`} target="_blank" rel="noreferrer">Open</a>
+                      <button className="text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15" onClick={async()=>{ try { await navigator.clipboard.writeText(`${window.location.origin}/s/${s.token}`) } catch {} }}>Copy link</button>
+                      <button className="ml-auto text-xs px-2 py-1 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300 hover:bg-rose-500/15" onClick={async()=>{ if(!confirm('Delete this share?')) return; try { const r = await API.shareDelete(s.id); if(r?.ok) setAllShares(prev=>prev.filter(x=>x.id!==s.id)) } catch{} }}>Delete</button>
+                    </div>
+                  </div>
+                ))}
+                {allShares.length === 0 && (
+                  <div className="text-slate-400 text-sm">No shares.</div>
+                )}
               </div>
             )}
           </div>
