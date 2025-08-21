@@ -848,14 +848,14 @@ export default function App() {
                             onClick={async () => {
                               if (!scanSelectedPath) return
                               setScanning(true)
+                              setError('')
                               try {
                                 const r = await API.rescanPath(scanSelectedPath)
                                 if (!r?.ok) throw new Error(r?.error || 'Scan failed')
-                                // Force complete refresh of tree after path scan
-                                const t = await API.tree(treeMode, mediaFilter)
-                                setTree(t)
-                                setSelected(scanSelectedPath)
-                                setOpen(prev => new Set(prev).add(scanSelectedPath))
+                                
+                                // Start polling for status
+                                setScanJobToken(Date.now())
+                                
                                 // Clear photo cache to force fresh load
                                 photoIdsRef.current = new Set()
                                 setPhotos([])
@@ -864,9 +864,21 @@ export default function App() {
                                 setTotal(0)
                                 setInitialLoaded(false)
                                 setLoadedThumbnails(new Set())
-                              } catch {}
-                              setScanning(false)
-                              setScanMenuOpen(false)
+                                
+                                // Force complete refresh of tree after path scan
+                                const t = await API.tree(treeMode, mediaFilter)
+                                if (!t) throw new Error('Failed to refresh tree')
+                                setTree(t)
+                                setSelected(scanSelectedPath)
+                                setOpen(prev => new Set(prev).add(scanSelectedPath))
+                                
+                              } catch (e) {
+                                console.error('Scan path failed:', e)
+                                setError('Failed to scan path. Please try again.')
+                              } finally {
+                                setScanning(false)
+                                setScanMenuOpen(false)
+                              }
                             }}
                           >
                             Scan Now
@@ -911,16 +923,24 @@ export default function App() {
                  loading={treeLoading}
                  onToggleMode={async (nextMode) => {
                    if (nextMode === treeMode) return
-                   setTreeMode(nextMode)
+                   
+                   // Set loading states to prevent race conditions
                    setTreeLoading(true)
-                   // Force complete refresh when switching modes to ensure clean state
+                   setLoading(true)
+                   setError('')
+                   
+                   // Add timeout to prevent stuck loading state
+                   const timeoutId = setTimeout(() => {
+                     setTreeLoading(false)
+                     setLoading(false)
+                     setError('Request timed out. Please try again.')
+                   }, 30000) // 30 second timeout
+                   
                    try {
-                     const t = await API.tree(nextMode, mediaFilter)
-                     setTree(t)
-                     setOpen(new Set([t.path]))
-                     setSelected(t.path)
-                     setDateRange({ from: 0, to: 0 })
-                     // Clear photo cache to force fresh load
+                     // Update tree mode first
+                     setTreeMode(nextMode)
+                     
+                     // Clear all cached state immediately to prevent stale data
                      photoIdsRef.current = new Set()
                      setPhotos([])
                      setPage(1)
@@ -928,10 +948,28 @@ export default function App() {
                      setTotal(0)
                      setInitialLoaded(false)
                      setLoadedThumbnails(new Set())
+                     setSelectMode(false)
+                     setSelectedIds(new Set())
+                     setDateRange({ from: 0, to: 0 })
+                     
+                     // Refresh tree with new mode
+                     const t = await API.tree(nextMode, mediaFilter)
+                     if (!t) throw new Error('Failed to load tree')
+                     
+                     // Update tree and reset selection
+                     setTree(t)
+                     setOpen(new Set([t.path]))
+                     setSelected(t.path)
+                     
                    } catch (e) {
                      console.error('Failed to refresh tree when switching modes:', e)
+                     setError('Failed to switch view mode. Please try again.')
+                     // Revert tree mode on error
+                     setTreeMode(treeMode)
                    } finally {
+                     clearTimeout(timeoutId)
                      setTreeLoading(false)
+                     setLoading(false)
                    }
                  }}
                />
@@ -1007,19 +1045,28 @@ export default function App() {
                 {/* Filter: Photos/Videos */}
                 <div>
                   <select
-                    className="text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                    className={`text-xs px-2 py-1 rounded border ${loading ? 'bg-white/5 border-white/5 opacity-50 cursor-not-allowed' : 'bg-white/10 border-white/10 hover:bg-white/15'}`}
                     value={mediaFilter}
+                    disabled={loading}
                     onChange={async (e) => {
                       const val = e.target.value
-                      setMediaFilter(val)
-                      // Force complete refresh when changing media filter
+                      if (val === mediaFilter) return // No change needed
+                      
+                      // Set loading state to prevent race conditions
+                      setLoading(true)
+                      setError('')
+                      
+                      // Add timeout to prevent stuck loading state
+                      const timeoutId = setTimeout(() => {
+                        setLoading(false)
+                        setError('Request timed out. Please try again.')
+                      }, 30000) // 30 second timeout
+                      
                       try {
-                        const t = await API.tree(treeMode, val)
-                        setTree(t)
-                        // Reset to root and clear any cached state
-                        setOpen(new Set([t.path]))
-                        setSelected(t.path)
-                        // Clear photo cache to force fresh load
+                        // Update media filter first
+                        setMediaFilter(val)
+                        
+                        // Clear all cached state immediately to prevent stale data
                         photoIdsRef.current = new Set()
                         setPhotos([])
                         setPage(1)
@@ -1027,8 +1074,26 @@ export default function App() {
                         setTotal(0)
                         setInitialLoaded(false)
                         setLoadedThumbnails(new Set())
+                        setSelectMode(false)
+                        setSelectedIds(new Set())
+                        
+                        // Refresh tree with new filter
+                        const t = await API.tree(treeMode, val)
+                        if (!t) throw new Error('Failed to load tree')
+                        
+                        // Update tree and reset selection
+                        setTree(t)
+                        setOpen(new Set([t.path]))
+                        setSelected(t.path)
+                        
                       } catch (e) {
                         console.error('Failed to refresh tree when changing media filter:', e)
+                        setError('Failed to update media filter. Please try again.')
+                        // Revert media filter on error
+                        setMediaFilter(mediaFilter)
+                      } finally {
+                        clearTimeout(timeoutId)
+                        setLoading(false)
                       }
                     }}
                     title="Filter media type"
@@ -1076,7 +1141,14 @@ export default function App() {
                   </div>
 
                   <div className="text-xs text-slate-300 shrink-0 px-2 py-1 rounded bg-white/5 border border-white/10">
-                    {total.toLocaleString()} items
+                    {loading ? (
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 border border-slate-400 border-t-transparent rounded-full animate-spin"></div>
+                        <span>Loading...</span>
+                      </div>
+                    ) : (
+                      `${total.toLocaleString()} items`
+                    )}
                   </div>
                 </div>
               </div>
@@ -1300,6 +1372,14 @@ export default function App() {
                                 if (r?.ok) {
                                   // Start polling for status
                                   setScanJobToken(Date.now())
+                                  // Clear photo cache to force fresh load after scan
+                                  photoIdsRef.current = new Set()
+                                  setPhotos([])
+                                  setPage(1)
+                                  setHasMore(true)
+                                  setTotal(0)
+                                  setInitialLoaded(false)
+                                  setLoadedThumbnails(new Set())
                                 } else {
                                   setScanning(false)
                                   setScanMenuOpen(false)
@@ -1353,16 +1433,24 @@ export default function App() {
               loading={treeLoading}
               onToggleMode={async (nextMode) => {
                 if (nextMode === treeMode) return
-                setTreeMode(nextMode)
+                
+                // Set loading states to prevent race conditions
                 setTreeLoading(true)
-                // Force complete refresh when switching modes to ensure clean state
+                setLoading(true)
+                setError('')
+                
+                // Add timeout to prevent stuck loading state
+                const timeoutId = setTimeout(() => {
+                  setTreeLoading(false)
+                  setLoading(false)
+                  setError('Request timed out. Please try again.')
+                }, 30000) // 30 second timeout
+                
                 try {
-                  const t = await API.tree(nextMode, mediaFilter)
-                  setTree(t)
-                  setOpen(new Set([t.path]))
-                  setSelected(t.path)
-                  setDateRange({ from: 0, to: 0 })
-                  // Clear photo cache to force fresh load
+                  // Update tree mode first
+                  setTreeMode(nextMode)
+                  
+                  // Clear all cached state immediately to prevent stale data
                   photoIdsRef.current = new Set()
                   setPhotos([])
                   setPage(1)
@@ -1370,10 +1458,28 @@ export default function App() {
                   setTotal(0)
                   setInitialLoaded(false)
                   setLoadedThumbnails(new Set())
+                  setSelectMode(false)
+                  setSelectedIds(new Set())
+                  setDateRange({ from: 0, to: 0 })
+                  
+                  // Refresh tree with new mode
+                  const t = await API.tree(nextMode, mediaFilter)
+                  if (!t) throw new Error('Failed to load tree')
+                  
+                  // Update tree and reset selection
+                  setTree(t)
+                  setOpen(new Set([t.path]))
+                  setSelected(t.path)
+                  
                 } catch (e) {
                   console.error('Failed to refresh tree when switching modes:', e)
+                  setError('Failed to switch view mode. Please try again.')
+                  // Revert tree mode on error
+                  setTreeMode(treeMode)
                 } finally {
+                  clearTimeout(timeoutId)
                   setTreeLoading(false)
+                  setLoading(false)
                 }
               }}
             />
