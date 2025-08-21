@@ -1980,13 +1980,15 @@ function Viewer({
             <div className="ml-auto flex items-center gap-2">
               {!isVideo && (
                 <>
-                  <button
-                    className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
-                    onClick={onFullscreen}
-                    title="Full screen"
-                  >
-                    <Monitor className="w-5 h-5 text-white" />
-                  </button>
+                  {!/iPad|iPhone|iPod/.test(navigator.userAgent) && (
+                    <button
+                      className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                      onClick={onFullscreen}
+                      title="Full screen"
+                    >
+                      <Monitor className="w-5 h-5 text-white" />
+                    </button>
+                  )}
                   <button
                     className={`px-3 py-1 rounded-full border border-white/10 ${useFullRes ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
                     onClick={() => {
