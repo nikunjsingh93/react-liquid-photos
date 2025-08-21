@@ -831,9 +831,13 @@ export default function App() {
     if (selectMode) toggleSelectId(id)
     else openViewer(idx)
   }
+  const [downloadLoading, setDownloadLoading] = useState(false)
+  
   const downloadZip = async () => {
     const ids = Array.from(selectedIds)
     if (ids.length === 0) return
+    
+    setDownloadLoading(true)
     try {
       const url = isShareMode ? apiUrl(`/s/${shareToken}/download/batch`) : apiUrl('/download/batch')
       const res = await fetch(url, {
@@ -856,6 +860,8 @@ export default function App() {
       URL.revokeObjectURL(dlUrl)
     } catch (e) {
       console.error('zip download failed', e)
+    } finally {
+      setDownloadLoading(false)
     }
   }
 
@@ -1387,11 +1393,17 @@ export default function App() {
                 <div className="text-sm">{selectedIds.size} selected</div>
                 <div className="flex items-center gap-2">
                   <button
-                    className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                    className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed"
                     onClick={downloadZip}
+                    disabled={downloadLoading}
                     title="Download .zip"
                   >
-                    <Download className="w-4 h-4" /> .zip
+                    {downloadLoading ? (
+                      <div className="w-4 h-4 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div>
+                    ) : (
+                      <Download className="w-4 h-4" />
+                    )}
+                    .zip
                   </button>
                   <button
                     className="inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10 hover:bg-white/20"
