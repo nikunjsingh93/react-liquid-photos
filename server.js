@@ -1186,6 +1186,7 @@ app.get('/view/:id', requireAuth, async (req, res) => {
       return res.status(500).end()
     }
     res.setHeader('content-type', 'image/webp')
+    res.setHeader('Cache-Control', 'no-store')
     fs.createReadStream(thumb).pipe(res)
   } else {
     const view = await ensureView(abs)
@@ -1194,6 +1195,7 @@ app.get('/view/:id', requireAuth, async (req, res) => {
       return res.status(500).end()
     }
     res.setHeader('content-type', 'image/webp')
+    res.setHeader('Cache-Control', 'no-store')
     fs.createReadStream(view).pipe(res)
   }
 })
@@ -1235,11 +1237,18 @@ app.get('/media/:id', requireAuth, async (req, res) => {
     } else {
       const disp = await ensureDisplayableMedia(abs)
       res.setHeader('content-type', disp.contentType)
+      // Disable caching for full-resolution images served via /media
+      if (disp.contentType && disp.contentType.startsWith('image/')) {
+        res.setHeader('Cache-Control', 'no-store')
+      }
       fs.createReadStream(disp.path).pipe(res)
     }
   } catch (e) {
     const type = mime.lookup(abs) || 'application/octet-stream'
     res.setHeader('content-type', type)
+    if (String(type).startsWith('image/')) {
+      res.setHeader('Cache-Control', 'no-store')
+    }
     fs.createReadStream(abs).pipe(res)
   }
 })
