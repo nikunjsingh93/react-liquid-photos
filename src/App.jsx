@@ -9,8 +9,7 @@ import {
 const API_BASE = window.location.origin
 const apiUrl = (path) => `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`
 
-// Persist the last successfully displayed image URL across navigations to avoid blanks on next/prev
-let LAST_VIEWER_URL = ''
+// Removed LAST_VIEWER_URL as it's no longer needed with simplified image loading
 
 /* ----- API ----- */
 const API = {
@@ -1729,106 +1728,23 @@ function Viewer({
   const [imageLoading, setImageLoading] = useState(true)
   const isVideo = String(photo?.kind) === 'video'
   const [quality, setQuality] = useState('reduced') // 'original' | 'reduced'
-  const [displayedUrl, setDisplayedUrl] = useState('')
-  const [pendingUrl, setPendingUrl] = useState('')
-  const [posterTs, setPosterTs] = useState(0)
+  const [imageUrl, setImageUrl] = useState('')
 
   // Reset loading state when photo changes
   useEffect(() => {
     setImageLoading(true)
   }, [photo.id])
 
-  // Create a stable cache-busting token for poster per photo
-  useEffect(() => {
-    setPosterTs(Date.now())
-  }, [photo.id])
-
-  // Always fetch image from server without using browser cache (no prefetch/disk cache)
+  // Simplified image loading - use direct URLs with proper caching
   useEffect(() => {
     if (!photo?.id || isVideo) return
-    let aborted = false
-    const controller = new AbortController()
-    const currentTs = Date.now()
+    
     const path = useFullRes ? `/media/${photo.id}` : `/view/${photo.id}`
-    const url = `${apiUrl(path)}?ts=${currentTs}`
+    const url = apiUrl(path)
+    
+    setImageUrl(url)
     setImageLoading(true)
-    ;(async () => {
-      try {
-        const r = await fetch(url, { cache: 'no-store', credentials: 'include', signal: controller.signal })
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        const blob = await r.blob()
-        if (aborted) return
-        const nextUrl = URL.createObjectURL(blob)
-        setPendingUrl(prev => {
-          if (prev && prev.startsWith('blob:')) {
-            try { URL.revokeObjectURL(prev) } catch {}
-          }
-          return nextUrl
-        })
-      } catch (e) {
-        if (!aborted) {
-          // Fallback to cache-busting direct URL if fetch fails
-          setPendingUrl(url)
-        }
-      }
-    })()
-    return () => {
-      aborted = true
-      try { controller.abort() } catch {}
-    }
   }, [photo.id, useFullRes, isVideo])
-
-  // Decode pending image and swap only when ready, so the previous stays visible under the loader
-  useEffect(() => {
-    if (!pendingUrl) return
-    let canceled = false
-    const img = new Image()
-    img.onload = () => {
-      if (canceled) return
-      setDisplayedUrl(prev => {
-        const prevUrl = prev
-        // Swap to new URL first, then revoke old if it was a blob
-        setTimeout(() => {
-          if (prevUrl && prevUrl.startsWith('blob:')) {
-            try { URL.revokeObjectURL(prevUrl) } catch {}
-          }
-        }, 0)
-        // Revoke previously persisted URL if it was a blob and different
-        try {
-          if (LAST_VIEWER_URL && LAST_VIEWER_URL.startsWith('blob:') && LAST_VIEWER_URL !== pendingUrl) {
-            URL.revokeObjectURL(LAST_VIEWER_URL)
-          }
-        } catch {}
-        LAST_VIEWER_URL = pendingUrl
-        return pendingUrl
-      })
-      setPendingUrl('')
-      setImageLoading(false)
-    }
-    img.onerror = () => {
-      if (canceled) return
-      // Even if decode fails, show what we have to avoid blank
-      setDisplayedUrl(prev => {
-        const next = prev || pendingUrl
-        if (next) LAST_VIEWER_URL = next
-        return next
-      })
-      setPendingUrl('')
-      setImageLoading(false)
-    }
-    img.src = pendingUrl
-    return () => { canceled = true }
-  }, [pendingUrl])
-
-  // Cleanup object URLs on unmount only (revocation of previous values is handled at set time)
-  useEffect(() => {
-    return () => {
-      try { if (displayedUrl && displayedUrl.startsWith('blob:')) URL.revokeObjectURL(displayedUrl) } catch {}
-      try { if (pendingUrl && pendingUrl.startsWith('blob:') && pendingUrl !== displayedUrl) URL.revokeObjectURL(pendingUrl) } catch {}
-      try { if (LAST_VIEWER_URL && LAST_VIEWER_URL.startsWith('blob:')) URL.revokeObjectURL(LAST_VIEWER_URL) } catch {}
-      LAST_VIEWER_URL = ''
-    }
-  }, [])
 
   // Touch swipe handlers
   const touchStartRef = useRef({ x: 0, y: 0, t: 0 })
@@ -1888,7 +1804,7 @@ function Viewer({
       <div className="flex-1 flex flex-col">
         <div className="relative flex items-center px-4" style={{ height: HEADER_H }}>
           <div className="pointer-events-none sm:absolute sm:left-1/2 sm:-translate-x-1/2 sm:text-center sm:max-w-[60vw] min-w-0 flex-1">
-            {(isVideo || !!(displayedUrl || LAST_VIEWER_URL)) && (
+            {(isVideo || imageUrl) && (
               <div className="truncate text-sm text-white text-left sm:text-center">
                 {truncatedName}
               </div>
@@ -1965,20 +1881,20 @@ function Viewer({
                 height: 'auto',
                 objectFit: 'contain'
               }}
-              poster={`${apiUrl(`/view/${photo.id}`)}?ts=${posterTs}`}
+              poster={apiUrl(`/view/${photo.id}`)}
               onLoad={() => setImageLoading(false)}
               onError={() => setImageLoading(false)}
             />
           ) : (
-            !!(displayedUrl || LAST_VIEWER_URL) ? (
+            imageUrl && (
               <img
-                src={displayedUrl || LAST_VIEWER_URL}
+                src={imageUrl}
                 alt={photo.fname}
                 style={{ maxHeight: imgMaxHeight, maxWidth: isSmall && infoOpen ? '94vw' : '92vw' }}
                 onLoad={() => setImageLoading(false)}
                 onError={() => setImageLoading(false)}
               />
-            ) : null
+            )
           )}
 
           <button className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 border border-white/10 hover:bg-white/20" onClick={onNext}>▶</button>
