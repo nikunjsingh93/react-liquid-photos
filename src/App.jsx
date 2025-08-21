@@ -1279,8 +1279,8 @@ export default function App() {
                 
                 {/* Right side controls */}
                 <div className="ml-auto flex items-center gap-2">
-                  {/* Share button (only when inside a folder) */}
-                  {!isShareMode && treeMode === 'folders' && selected && (
+                  {/* Share button (always shown; dropdown adapts to selection) */}
+                  {!isShareMode && (
                     <div ref={shareRef} className="relative">
                       <button
                         className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
@@ -1294,23 +1294,30 @@ export default function App() {
                       {shareOpen && (
                         <div className="absolute right-0 top-full mt-2 z-30 w-64 rounded border border-white/10 bg-zinc-950 shadow-xl p-2">
                           <div className="text-xs text-slate-300 mb-2">Share options</div>
-                          <button
-                            className="w-full text-left inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15 mb-2"
-                            onClick={async () => {
-                              try {
-                                const folderName = String(selected).split('/').filter(Boolean).slice(-1)[0] || 'Folder'
-                                const r = await API.shareCreate(selected, folderName)
-                                if (!r?.token) throw new Error(r?.error || 'Share failed')
-                                const full = `${window.location.origin}${r.urlPath}`
-                                try { await navigator.clipboard.writeText(full); showToast('Link copied to clipboard') } catch { showToast('Copy failed; please copy from modal'); }
-                                setShareOpen(false)
-                              } catch (e) {
-                                alert(e?.message || 'Failed to create share')
-                              }
-                            }}
-                          >
-                            Share "{(String(selected).split('/').filter(Boolean).slice(-1)[0] || 'Folder')}" Link
-                          </button>
+                          {!(treeMode === 'folders' && selected && !String(selected).startsWith('date:')) && (
+                            <div className="mb-2 text-xs text-amber-300 bg-amber-900/30 border border-amber-500/30 rounded px-2 py-1">
+                              Select Folder from Tree to Share
+                            </div>
+                          )}
+                          {(treeMode === 'folders' && selected && !String(selected).startsWith('date:')) && (
+                            <button
+                              className="w-full text-left inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15 mb-2"
+                              onClick={async () => {
+                                try {
+                                  const folderName = String(selected).split('/').filter(Boolean).slice(-1)[0] || 'Folder'
+                                  const r = await API.shareCreate(selected, folderName)
+                                  if (!r?.token) throw new Error(r?.error || 'Share failed')
+                                  const full = `${window.location.origin}${r.urlPath}`
+                                  try { await navigator.clipboard.writeText(full); showToast('Link copied to clipboard') } catch { showToast('Copy failed; please copy from modal') }
+                                  setShareOpen(false)
+                                } catch (e) {
+                                  alert(e?.message || 'Failed to create share')
+                                }
+                              }}
+                            >
+                              Share "{(String(selected).split('/').filter(Boolean).slice(-1)[0] || 'Folder')}" Folder
+                            </button>
+                          )}
                           <button
                             className="w-full text-left inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
                             onClick={async () => {
@@ -1717,29 +1724,29 @@ export default function App() {
               <div className="text-sm font-semibold">All shares</div>
               <button className="ml-auto p-2 rounded bg-white/10 border border-white/10" onClick={() => setShareModalOpen(false)}><X className="w-4 h-4" /></button>
             </div>
-            {loadingShares ? (
-              <div className="text-slate-400 text-sm">Loading…</div>
-            ) : (
-              <div className="space-y-2">
-                {shares.map(s => (
-                  <div key={s.id} className="rounded border border-white/10 p-2 flex items-center gap-2">
-                    <div className="min-w-0">
-                      <div className="text-sm text-slate-100 truncate">{s.name}</div>
-                      <div className="text-xs text-slate-400 truncate">{s.folder}</div>
-                      <div className="text-[10px] text-slate-500">{new Date(s.created_at).toLocaleString()}</div>
-                    </div>
-                    <div className="ml-auto flex items-center gap-2">
-                      <button className="text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15" onClick={async()=>{ try { await navigator.clipboard.writeText(`${window.location.origin}${s.urlPath}`) } catch {} }}>Copy link</button>
-                      <a className="text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15" href={s.urlPath} target="_blank" rel="noreferrer">Open</a>
-                      <button className="text-xs px-2 py-1 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300 hover:bg-rose-500/15" onClick={async()=>{ if (!confirm('Delete this share?')) return; try { const r = await API.shareDelete(s.id); if (r?.ok) setShares(prev=>prev.filter(x=>x.id!==s.id)) } catch {} }}>Delete</button>
-                    </div>
+            {/* Always show shares list */}
+            <div className="space-y-2">
+              {loadingShares && (
+                <div className="text-slate-400 text-sm">Loading…</div>
+              )}
+              {shares.map(s => (
+                <div key={s.id} className="rounded border border-white/10 p-2 flex items-center gap-2">
+                  <div className="min-w-0">
+                    <div className="text-sm text-slate-100 truncate">{s.name}</div>
+                    <div className="text-xs text-slate-400 truncate">{s.folder}</div>
+                    <div className="text-[10px] text-slate-500">{new Date(s.created_at).toLocaleString()}</div>
                   </div>
-                ))}
-                {shares.length === 0 && (
-                  <div className="text-slate-400 text-sm">No shares yet.</div>
-                )}
-              </div>
-            )}
+                  <div className="ml-auto flex items-center gap-2">
+                    <button className="text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15" onClick={async()=>{ try { await navigator.clipboard.writeText(`${window.location.origin}${s.urlPath}`); showToast('Link copied to clipboard') } catch {} }}>Copy link</button>
+                    <a className="text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15" href={s.urlPath} target="_blank" rel="noreferrer">Open</a>
+                    <button className="text-xs px-2 py-1 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300 hover:bg-rose-500/15" onClick={async()=>{ if (!confirm('Delete this share?')) return; try { const r = await API.shareDelete(s.id); if (r?.ok) setShares(prev=>prev.filter(x=>x.id!==s.id)) } catch {} }}>Delete</button>
+                  </div>
+                </div>
+              ))}
+              {!loadingShares && shares.length === 0 && (
+                <div className="text-slate-400 text-sm">No shares yet.</div>
+              )}
+            </div>
           </div>
         </div>
       )}
