@@ -335,6 +335,43 @@ async function ensureHeicDecodedPreview(absPath) {
   })
 }
 
+/**
+ * Decode problematic image files (like corrupted JPEGs) using ffmpeg to a lossless/displayable JPEG for downstream processing.
+ */
+async function ensureFfmpegImagePreview(absPath) {
+  const h = hashPath(absPath)
+  const out = path.join(RAW_PREVIEWS_DIR, `${h}_ffmpeg.jpg`)
+  if (await fileExists(out)) return out
+  return new Promise((resolve) => {
+    const args = [
+      '-hide_banner', '-loglevel', 'error',
+      '-i', absPath,
+      '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', // Ensure even dimensions
+      '-q:v', '2', // High quality
+      '-y', out
+    ]
+    console.log('[ffmpeg] converting problematic image:', absPath, '->', out)
+    const ex = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    let stderrBuf = ''
+    ex.stderr.on('data', (d) => { stderrBuf += String(d) })
+    ex.on('close', async (code) => {
+      if (code === 0 && await fileExists(out)) {
+        console.log('[ffmpeg] success:', absPath)
+        resolve(out)
+      } else {
+        console.error('[ffmpeg] failed:', absPath, 'code:', code, 'stderr:', stderrBuf)
+        try { await fsp.unlink(out) } catch {}
+        resolve(null)
+      }
+    })
+    ex.on('error', async (err) => {
+      console.error('[ffmpeg] spawn error:', absPath, err.message)
+      try { await fsp.unlink(out) } catch {}
+      resolve(null)
+    })
+  })
+}
+
 async function scanAndIndex(job = currentIndexJob) {
   console.log('[index] scanning…')
   const t0 = Date.now()
@@ -492,14 +529,22 @@ async function ensureThumb(absPath) {
             await sharp(prev).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
           }
         } else {
-          throw e
+          // Try ffmpeg fallback for problematic JPEG files
+          console.log('[thumb] Sharp failed, trying ffmpeg fallback:', absPath, e.message)
+          const prev = await ensureFfmpegImagePreview(absPath)
+          if (!prev) {
+            throw e
+          }
+          await sharp(prev).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
         }
       }
     }
     return out
   } catch (e) {
     console.warn('thumb failed', absPath, e.message)
-    return null
+    // As a last resort, try to serve the original file directly
+    // This allows users to at least download the problematic image
+    return absPath
   }
 }
 
@@ -539,14 +584,22 @@ async function ensureView(absPath) {
             await sharp(prev).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
           }
         } else {
-          throw e
+          // Try ffmpeg fallback for problematic JPEG files
+          console.log('[view] Sharp failed, trying ffmpeg fallback:', absPath, e.message)
+          const prev = await ensureFfmpegImagePreview(absPath)
+          if (!prev) {
+            throw e
+          }
+          await sharp(prev).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
         }
       }
       return out
     }
   } catch (e) {
     console.warn('view failed', absPath, e.message)
-    return null
+    // As a last resort, try to serve the original file directly
+    // This allows users to at least download the problematic image
+    return absPath
   }
 }
 
@@ -1439,9 +1492,18 @@ app.get('/s/:token/thumb/:id', async (req, res) => {
     const abs = path.join(PHOTOS_ROOT, row.path)
     const thumb = await ensureThumb(abs)
     if (!thumb) return res.status(500).end()
-    res.setHeader('content-type', 'image/webp')
-    res.setHeader('Cache-Control', 'public, max-age=31536000')
-    fs.createReadStream(thumb).pipe(res)
+    
+    // Check if thumb is the original file (fallback case)
+    if (thumb === abs) {
+      const contentType = mime.lookup(abs) || 'image/jpeg'
+      res.setHeader('content-type', contentType)
+      res.setHeader('Cache-Control', 'public, max-age=31536000')
+      fs.createReadStream(thumb).pipe(res)
+    } else {
+      res.setHeader('content-type', 'image/webp')
+      res.setHeader('Cache-Control', 'public, max-age=31536000')
+      fs.createReadStream(thumb).pipe(res)
+    }
   } catch { res.status(500).end() }
 })
 
@@ -1454,15 +1516,33 @@ app.get('/s/:token/view/:id', async (req, res) => {
     if (row.kind === 'video') {
       const thumb = await ensureThumb(abs)
       if (!thumb) return res.status(500).end()
-      res.setHeader('content-type', 'image/webp')
-      res.setHeader('Cache-Control', 'public, max-age=31536000')
-      fs.createReadStream(thumb).pipe(res)
+      
+      // Check if thumb is the original file (fallback case)
+      if (thumb === abs) {
+        const contentType = mime.lookup(abs) || 'image/jpeg'
+        res.setHeader('content-type', contentType)
+        res.setHeader('Cache-Control', 'public, max-age=31536000')
+        fs.createReadStream(thumb).pipe(res)
+      } else {
+        res.setHeader('content-type', 'image/webp')
+        res.setHeader('Cache-Control', 'public, max-age=31536000')
+        fs.createReadStream(thumb).pipe(res)
+      }
     } else {
       const view = await ensureView(abs)
       if (!view) return res.status(500).end()
-      res.setHeader('content-type', 'image/webp')
-      res.setHeader('Cache-Control', 'public, max-age=31536000')
-      fs.createReadStream(view).pipe(res)
+      
+      // Check if view is the original file (fallback case)
+      if (view === abs) {
+        const contentType = mime.lookup(abs) || 'image/jpeg'
+        res.setHeader('content-type', contentType)
+        res.setHeader('Cache-Control', 'public, max-age=31536000')
+        fs.createReadStream(view).pipe(res)
+      } else {
+        res.setHeader('content-type', 'image/webp')
+        res.setHeader('Cache-Control', 'public, max-age=31536000')
+        fs.createReadStream(view).pipe(res)
+      }
     }
   } catch { res.status(500).end() }
 })
@@ -1732,9 +1812,18 @@ app.get('/thumb/:id', requireAuth, async (req, res) => {
     console.error('[thumb] thumb failed for:', abs)
     return res.status(500).end()
   }
-  res.setHeader('content-type', 'image/webp')
-  res.setHeader('Cache-Control', 'public, max-age=31536000') // Cache for 1 year
-  fs.createReadStream(thumb).pipe(res)
+  
+  // Check if thumb is the original file (fallback case)
+  if (thumb === abs) {
+    const contentType = mime.lookup(abs) || 'image/jpeg'
+    res.setHeader('content-type', contentType)
+    res.setHeader('Cache-Control', 'public, max-age=31536000') // Cache for 1 year
+    fs.createReadStream(thumb).pipe(res)
+  } else {
+    res.setHeader('content-type', 'image/webp')
+    res.setHeader('Cache-Control', 'public, max-age=31536000') // Cache for 1 year
+    fs.createReadStream(thumb).pipe(res)
+  }
 })
 
 app.get('/view/:id', requireAuth, async (req, res) => {
@@ -1752,18 +1841,36 @@ app.get('/view/:id', requireAuth, async (req, res) => {
       console.error('[view] thumb failed for video:', abs)
       return res.status(500).end()
     }
-    res.setHeader('content-type', 'image/webp')
-    res.setHeader('Cache-Control', 'public, max-age=31536000') // Cache for 1 year
-    fs.createReadStream(thumb).pipe(res)
+    
+    // Check if thumb is the original file (fallback case)
+    if (thumb === abs) {
+      const contentType = mime.lookup(abs) || 'image/jpeg'
+      res.setHeader('content-type', contentType)
+      res.setHeader('Cache-Control', 'public, max-age=31536000') // Cache for 1 year
+      fs.createReadStream(thumb).pipe(res)
+    } else {
+      res.setHeader('content-type', 'image/webp')
+      res.setHeader('Cache-Control', 'public, max-age=31536000') // Cache for 1 year
+      fs.createReadStream(thumb).pipe(res)
+    }
   } else {
     const view = await ensureView(abs)
     if (!view) {
       console.error('[view] view failed for image:', abs)
       return res.status(500).end()
     }
-    res.setHeader('content-type', 'image/webp')
-    res.setHeader('Cache-Control', 'public, max-age=31536000') // Cache for 1 year
-    fs.createReadStream(view).pipe(res)
+    
+    // Check if view is the original file (fallback case)
+    if (view === abs) {
+      const contentType = mime.lookup(abs) || 'image/jpeg'
+      res.setHeader('content-type', contentType)
+      res.setHeader('Cache-Control', 'public, max-age=31536000') // Cache for 1 year
+      fs.createReadStream(view).pipe(res)
+    } else {
+      res.setHeader('content-type', 'image/webp')
+      res.setHeader('Cache-Control', 'public, max-age=31536000') // Cache for 1 year
+      fs.createReadStream(view).pipe(res)
+    }
   }
 })
 
