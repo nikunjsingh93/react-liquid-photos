@@ -1526,11 +1526,18 @@ export default function App() {
               )}
 
               {/* Grid */}
-              {initialLoaded && photos.length === 0 ? (
+              {initialLoaded && photos.length === 0 && !showFavorites ? (
                 <div className="flex items-center justify-center py-16">
                   <div className="text-center">
                     <div className="text-slate-400 text-lg mb-2">There are no Items in this selection</div>
                     <div className="text-slate-500 text-sm">Try selecting a different folder or adjusting your filters</div>
+                  </div>
+                </div>
+              ) : initialLoaded && showFavorites && favoritesList.length === 0 ? (
+                <div className="flex items-center justify-center py-16">
+                  <div className="text-center">
+                    <div className="text-slate-400 text-lg mb-2">No photos in Favorites</div>
+                    <div className="text-slate-500 text-sm">Tap the heart on photos to add them</div>
                   </div>
                 </div>
               ) : (
