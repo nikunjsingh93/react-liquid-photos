@@ -1855,13 +1855,21 @@ export default function App() {
                 <div className="text-slate-400 text-sm">Loading…</div>
               )}
               {shares.map(s => (
-                <div key={s.id} className="rounded border border-white/10 p-2 flex items-center gap-2">
-                  <div className="min-w-0">
+                <div key={s.id} className="rounded border border-white/10 p-2 flex items-start gap-2">
+                  <div className="min-w-0 flex-1">
                     <div className="text-sm text-slate-100 truncate">{s.name}{s.selected ? ' (selected)' : ''}</div>
-                    <div className="text-xs text-slate-400 truncate">{s.folder}</div>
+                    <div className="text-xs text-slate-400 leading-tight" style={{ 
+                      display: '-webkit-box',
+                      WebkitLineClamp: 3,
+                      WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                      wordBreak: 'break-all'
+                    }}>
+                      {s.folder}
+                    </div>
                     <div className="text-[10px] text-slate-500">{new Date(s.created_at).toLocaleString()}</div>
                   </div>
-                  <div className="ml-auto flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     <button className="text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15" onClick={async()=>{ try { await navigator.clipboard.writeText(`${window.location.origin}${s.urlPath}`); showToast('Link copied to clipboard') } catch {} }}>Copy link</button>
                     <a className="text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15" href={s.urlPath} target="_blank" rel="noreferrer">Open</a>
                     <button className="text-xs px-2 py-1 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300 hover:bg-rose-500/15" onClick={async()=>{ if (!confirm('Delete this share?')) return; try { const r = await API.shareDelete(s.id); if (r?.ok) setShares(prev=>prev.filter(x=>x.id!==s.id)) } catch {} }}>Delete</button>
@@ -1964,9 +1972,9 @@ function Viewer({
         {/* Header when not browser fullscreen */}
         {!isBrowserFullscreen && (
           <div className="relative flex items-center px-4" style={{ height: HEADER_H }}>
-            <div className="pointer-events-none min-[1000px]:absolute min-[1000px]:left-1/2 min-[1000px]:-translate-x-1/2 min-[1000px]:text-center min-[1000px]:max-w-[60vw] min-w-0 flex-1">
+            <div className={`pointer-events-none min-w-0 flex-1 ${!isSmall && !infoOpen ? 'min-[1000px]:absolute min-[1000px]:left-1/2 min-[1000px]:-translate-x-1/2 min-[1000px]:text-center min-[1000px]:max-w-[60vw]' : ''}`}>
               {(isVideo || imageUrl) && (
-                <div className="truncate text-sm text-white text-left min-[1000px]:text-center">
+                <div className={`truncate text-sm text-white ${!isSmall && !infoOpen ? 'text-left min-[1000px]:text-center' : 'text-left'}`}>
                   {truncatedName}
                 </div>
               )}
@@ -2106,15 +2114,29 @@ function Viewer({
 
       {/* Info panel when not browser fullscreen */}
       {!isBrowserFullscreen && !isSmall && infoOpen && (
-        <aside className="w-[340px] max-w-[80vw] border-l border-white/10 bg-zinc-950/95 backdrop-blur px-4 py-4 overflow-auto">
+        <aside className="w-[340px] max-w-[80vw] border-l border-white/10 bg-zinc-950/95 backdrop-blur px-4 py-4 overflow-auto relative">
+          <button 
+            className="absolute top-2 right-2 p-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+            onClick={() => setInfoOpen(false)}
+            title="Close info"
+          >
+            <X className="w-4 h-4 text-white" />
+          </button>
           <InfoPanel meta={meta} fallback={photo} />
         </aside>
       )}
       {!isBrowserFullscreen && isSmall && infoOpen && (
         <aside
-          className="fixed bottom-0 left-0 right-0 z-[60] border-t border-white/10 bg-zinc-950/95 backdrop-blur px-4 py-3 overflow-auto"
+          className="absolute bottom-0 left-0 right-0 z-[60] border-t border-white/10 bg-zinc-950/95 backdrop-blur px-4 py-3 overflow-auto"
           style={{ height: `${MOBILE_INFO_VH}vh` }}
         >
+          <button 
+            className="absolute top-2 right-2 p-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+            onClick={() => setInfoOpen(false)}
+            title="Close info"
+          >
+            <X className="w-4 h-4 text-white" />
+          </button>
           <InfoPanel meta={meta} fallback={photo} />
         </aside>
       )}
