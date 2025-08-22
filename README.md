@@ -1,6 +1,6 @@
 # <img src="public/logo.svg" alt="Liquid Photos" width="32" height="32" style="vertical-align: middle; margin-right: 8px;" /> Liquid Photos
 
-A fast, modern photo and video gallery application built with React and Node.js.
+A fast, modern photo and video viewer application built with React and Node.js.
 
 ## Features
 
