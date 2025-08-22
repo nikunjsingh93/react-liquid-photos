@@ -18,6 +18,10 @@ A fast, modern photo and video gallery application built with React and Node.js.
   - Click the share button in the full-screen viewer to generate a direct link
   - Share links provide direct access to media without requiring authentication
   - Perfect for sharing photos with friends and family
+- **Favorites**: Add photos and videos to your favorites collection
+  - Click the heart icon in the full-screen viewer to add/remove from favorites
+  - Access your favorite media through the dedicated favorites section
+  - Quick way to organize and find your most cherished photos and videos
 - **Admin Tools**:
   - "Scan Media" menu with **Full Rescan** and **Scan Path** (admin-only)
   - Create users with an **Admin** toggle
