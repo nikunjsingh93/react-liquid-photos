@@ -1298,7 +1298,10 @@ export default function App() {
                         <Share className="w-4 h-4" />
                       </button>
                       {shareOpen && (
-                        <div className="absolute right-0 top-full mt-2 z-30 w-64 rounded border border-white/10 bg-zinc-950 shadow-xl p-2">
+                        <div className="fixed z-50 w-64 rounded border border-white/10 bg-zinc-950 shadow-xl p-2" style={{
+                          top: shareRef.current ? shareRef.current.getBoundingClientRect().bottom + 8 : 0,
+                          right: shareRef.current ? window.innerWidth - shareRef.current.getBoundingClientRect().right : 0
+                        }}>
                           <div className="text-xs text-slate-300 mb-2">Share options</div>
                           {!(treeMode === 'folders' && selected && !String(selected).startsWith('date:')) && (
                             <div className="mb-2 text-xs text-amber-300 bg-amber-900/30 border border-amber-500/30 rounded px-2 py-1">
@@ -1351,7 +1354,10 @@ export default function App() {
                       <Maximize2 className="w-4 h-4" />
                     </button>
                     {resizeOpen && (
-                      <div className="absolute right-0 top-full mt-2 z-30 w-40 rounded border border-white/10 bg-zinc-950 shadow-xl p-2">
+                      <div className="fixed z-50 w-40 rounded border border-white/10 bg-zinc-950 shadow-xl p-2" style={{
+                        top: resizeRef.current ? resizeRef.current.getBoundingClientRect().bottom + 8 : 0,
+                        right: resizeRef.current ? window.innerWidth - resizeRef.current.getBoundingClientRect().right : 0
+                      }}>
                         <div className="text-xs text-slate-300 mb-2">Resize grid</div>
                         <div className="flex items-center gap-2">
                           <button
@@ -1389,7 +1395,7 @@ export default function App() {
 
             {/* Multi-select toolbar overlay */}
             {selectMode && (
-              <div className="z-30 sticky top-0 bg-zinc-950/95 border-b border-white/10 shadow flex items-center justify-between px-3 py-2">
+              <div className="z-10 sticky top-0 bg-zinc-950/95 border-b border-white/10 shadow flex items-center justify-between px-3 py-2">
                 <div className="text-sm">{selectedIds.size} selected</div>
                 <div className="flex items-center gap-2">
                   <button
