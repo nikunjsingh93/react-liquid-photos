@@ -857,8 +857,10 @@ export default function App() {
     // Vertical swipe (up/down) - info panel and close
     else if (ady > THRESH && (adx / (ady || 1)) < MAX_ANGLE) {
       if (dy < 0) {
-        // Swipe up - open info panel
-        setInfoOpen(true)
+        // Swipe up - open info panel (disabled on mobile)
+        if (!isSmall) {
+          setInfoOpen(true)
+        }
       } else {
         // Swipe down - close info panel or close viewer
         if (infoOpen) {
@@ -1911,10 +1913,10 @@ function Viewer({
   isFavorite, toggleFavorite
 }) {
   // Favorite helpers available via props
-  const [useFullRes, setUseFullRes] = useState(false)
+  const [useFullRes, setUseFullRes] = useState(false) // Default to optimized view (false = optimized, true = original)
   const [imageLoading, setImageLoading] = useState(true)
   const isVideo = String(photo?.kind) === 'video'
-  const [quality, setQuality] = useState('reduced') // 'original' | 'reduced'
+  const [quality, setQuality] = useState('reduced') // 'original' | 'reduced' - default to optimized (reduced)
   const [imageUrl, setImageUrl] = useState('')
   const [isBrowserFullscreen, setIsBrowserFullscreen] = useState(false)
 
@@ -1991,16 +1993,19 @@ function Viewer({
                       <Monitor className="w-5 h-5 text-white" />
                     </button>
                   )}
-                  <button
-                    className={`px-3 py-1 rounded-full border border-white/10 ${useFullRes ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
-                    onClick={() => { setUseFullRes(!useFullRes); setImageLoading(true) }}
-                    title={useFullRes ? 'Switch to Optimized view' : 'Switch to Original view'}
-                  >
-                    {useFullRes ? 'Original' : 'Optimized'}
-                  </button>
+                  {/* Hide optimized button on mobile */}
+                  {!isSmall && (
+                    <button
+                      className={`px-3 py-1 rounded-full border border-white/10 ${useFullRes ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
+                      onClick={() => { setUseFullRes(!useFullRes); setImageLoading(true) }}
+                      title={useFullRes ? 'Switch to Optimized view' : 'Switch to Original view'}
+                    >
+                      {useFullRes ? 'Original' : 'Optimized'}
+                    </button>
+                  )}
                 </>
               )}
-              {isVideo && (
+              {isVideo && !isSmall && (
                 <button
                   className={`px-3 py-1 rounded-full border border-white/10 ${quality ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
                   onClick={() => { setQuality(q => (q === 'original' ? 'reduced' : 'original')); setImageLoading(true) }}
@@ -2009,8 +2014,16 @@ function Viewer({
                   {quality === 'original' ? 'Original' : 'Optimized'}
                 </button>
               )}
-              {/* Hide info button on mobile */}
-              {!isSmall && (
+              {/* Show info button on mobile, hide optimized button on mobile */}
+              {isSmall ? (
+                <button
+                  className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                  onClick={async () => { setInfoOpen(v => !v); if (!infoOpen) await ensureMeta(photo.id) }}
+                  title="Info"
+                >
+                  <Info className="w-6 h-6 text-white" />
+                </button>
+              ) : (
                 <button
                   className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
                   onClick={async () => { setInfoOpen(v => !v); if (!infoOpen) await ensureMeta(photo.id) }}
