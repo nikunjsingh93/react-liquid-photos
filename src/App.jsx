@@ -1281,7 +1281,11 @@ export default function App() {
                 {!isShareMode && (
                 <div>
                   <select
-                    className={`text-xs px-2 py-1 rounded-full border ${loading ? 'bg-white/5 border-white/5 opacity-50 cursor-not-allowed' : 'bg-white/10 border-white/10 hover:bg-white/20'}`}
+                    className={`text-xs px-2 py-1 rounded-full border text-slate-100 ${loading ? 'bg-white/5 border-white/5 opacity-50 cursor-not-allowed' : 'bg-white/10 border-white/10 hover:bg-white/20'}`}
+                    style={{
+                      color: '#f1f5f9', // slate-100 equivalent
+                      backgroundColor: 'rgba(255, 255, 255, 0.1)', // bg-white/10 equivalent
+                    }}
                     value={mediaFilter}
                     disabled={loading}
                     onChange={async (e) => {
@@ -1334,9 +1338,9 @@ export default function App() {
                     }}
                     title="Filter media type"
                   >
-                    <option value="all">Photos & Videos</option>
-                    <option value="images">Photos</option>
-                    <option value="videos">Videos</option>
+                    <option value="all" style={{ backgroundColor: '#18181b', color: '#f1f5f9' }}>Photos & Videos</option>
+                    <option value="images" style={{ backgroundColor: '#18181b', color: '#f1f5f9' }}>Photos</option>
+                    <option value="videos" style={{ backgroundColor: '#18181b', color: '#f1f5f9' }}>Videos</option>
                   </select>
                 </div>
                 )}
