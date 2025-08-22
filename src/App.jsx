@@ -79,6 +79,33 @@ const GlassShell = ({ children }) => (
   </div>
 )
 
+// Clipboard helper with iOS Safari fallback
+const copyToClipboard = async (text) => {
+  try {
+    // Try modern clipboard API first
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch (e) {
+    // Fallback for iOS Safari and other browsers
+    try {
+      const textArea = document.createElement('textarea')
+      textArea.value = text
+      textArea.style.position = 'fixed'
+      textArea.style.left = '-999999px'
+      textArea.style.top = '-999999px'
+      textArea.style.opacity = '0'
+      document.body.appendChild(textArea)
+      textArea.focus()
+      textArea.select()
+      const successful = document.execCommand('copy')
+      document.body.removeChild(textArea)
+      return successful
+    } catch {
+      return false
+    }
+  }
+}
+
 // RAW helpers (match server RAW_EXT)
 const RAW_EXTS = new Set(['.dng', '.arw', '.cr2', '.raf', '.nef', '.rw2'])
 function isRawName(name) {
@@ -484,7 +511,7 @@ export default function App() {
   const showToast = useCallback((message) => {
     setToast({ message, visible: true })
     window.clearTimeout(showToast._t)
-    showToast._t = window.setTimeout(() => setToast({ message: '', visible: false }), 1800)
+    showToast._t = window.setTimeout(() => setToast({ message: '', visible: false }), 3000)
   }, [])
 
   const loadScanTree = useCallback(async () => {
@@ -978,7 +1005,7 @@ export default function App() {
     <GlassShell>
       {/* Inline toast */}
       {toast.visible && (
-        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[10000] px-3 py-1.5 rounded bg-white/10 border border-white/10 text-xs text-slate-100 shadow">
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-[10000] px-4 py-2 rounded-lg bg-zinc-800/95 border border-zinc-600/50 text-sm text-slate-100 shadow-lg backdrop-blur-sm">
           {toast.message}
         </div>
       )}
@@ -1388,7 +1415,12 @@ export default function App() {
                                   const r = await API.shareCreate('', '', ids)
                                   if (!r?.token) throw new Error(r?.error || 'Share failed')
                                   const full = `${window.location.origin}${r.urlPath}`
-                                  try { await navigator.clipboard.writeText(full); showToast('Link copied to clipboard') } catch { showToast('Copy failed; please copy from modal') }
+                                  const copied = await copyToClipboard(full)
+                                  if (copied) {
+                                    showToast('Link copied to clipboard')
+                                  } else {
+                                    showToast('Copy failed; please copy from modal')
+                                  }
                                   setShareOpen(false)
                                   setSelectMode(false)
                                   setSelectedIds(new Set())
@@ -1411,7 +1443,12 @@ export default function App() {
                                   const r = await API.shareCreate(selected, folderName)
                                   if (!r?.token) throw new Error(r?.error || 'Share failed')
                                   const full = `${window.location.origin}${r.urlPath}`
-                                  try { await navigator.clipboard.writeText(full); showToast('Link copied to clipboard') } catch { showToast('Copy failed; please copy from modal') }
+                                  const copied = await copyToClipboard(full)
+                                  if (copied) {
+                                    showToast('Link copied to clipboard')
+                                  } else {
+                                    showToast('Copy failed; please copy from modal')
+                                  }
                                   setShareOpen(false)
                                   setSelectMode(false)
                                   setSelectedIds(new Set())
@@ -1435,7 +1472,12 @@ export default function App() {
                                   const r = await API.shareCreate(selected, `${folderName}`, ids)
                                   if (!r?.token) throw new Error(r?.error || 'Share failed')
                                   const full = `${window.location.origin}${r.urlPath}`
-                                  try { await navigator.clipboard.writeText(full); showToast('Link copied to clipboard') } catch { showToast('Copy failed; please copy from modal') }
+                                  const copied = await copyToClipboard(full)
+                                  if (copied) {
+                                    showToast('Link copied to clipboard')
+                                  } else {
+                                    showToast('Copy failed; please copy from modal')
+                                  }
                                   setShareOpen(false)
                                   setSelectMode(false)
                                   setSelectedIds(new Set())
@@ -1904,7 +1946,7 @@ export default function App() {
                     <div className="text-[10px] text-slate-500">{new Date(s.created_at).toLocaleString()}</div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <button className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/15" onClick={async()=>{ try { await navigator.clipboard.writeText(`${window.location.origin}${s.urlPath}`); showToast('Link copied to clipboard') } catch {} }}>Copy link</button>
+                    <button className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/15" onClick={async()=>{ const copied = await copyToClipboard(`${window.location.origin}${s.urlPath}`); if (copied) showToast('Link copied to clipboard') }}>Copy link</button>
                     <a className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/15" href={s.urlPath} target="_blank" rel="noreferrer">Open</a>
                     <button className="text-xs px-2 py-1 rounded-full bg-rose-500/10 border border-rose-500/30 text-rose-300 hover:bg-rose-500/15" onClick={async()=>{ if (!confirm('Delete this share?')) return; try { const r = await API.shareDelete(s.id); if (r?.ok) setShares(prev=>prev.filter(x=>x.id!==s.id)) } catch {} }}>Delete</button>
                   </div>
@@ -2511,7 +2553,7 @@ function AdminPanel({ user, onClose }) {
                     </div>
                     <div className="mt-2 flex items-center gap-2">
                       <a className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/15" href={s.urlPath || `/s/${s.token}`} target="_blank" rel="noreferrer">Open</a>
-                      <button className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/15" onClick={async()=>{ try { await navigator.clipboard.writeText(`${window.location.origin}/s/${s.token}`) } catch {} }}>Copy link</button>
+                      <button className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/15" onClick={async()=>{ const copied = await copyToClipboard(`${window.location.origin}/s/${s.token}`); if (copied) showToast('Link copied to clipboard') }}>Copy link</button>
                       <button className="ml-auto text-xs px-2 py-1 rounded-full bg-rose-500/10 border border-rose-500/30 text-rose-300 hover:bg-rose-500/15" onClick={async()=>{ if(!confirm('Delete this share?')) return; try { const r = await API.shareDelete(s.id); if(r?.ok) setAllShares(prev=>prev.filter(x=>x.id!==s.id)) } catch{} }}>Delete</button>
                     </div>
                   </div>
