@@ -119,7 +119,7 @@ Install these on the host (for Docker images, they are included):
 Prerequisites:
 - Docker
 
-1. Run from your folder root:
+1. Run from your project folder root which has Dockerfile:
 ```bash
 docker build -t liquid-photos:latest .
 
