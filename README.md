@@ -195,6 +195,8 @@ docker run -d \
 
 If your files are 200,000+ items and has videos, first Indexing can take upto 10 minutues. check Docker logs and wait for a message like "[index] done: 234,895 files in 694.5s" before going to the WEB UI
 
+Dont make the cache folder your external HDD as docker cant write to external HDDs
+
 ## Notes
 
 - Default Admin admin cannot be deleted.
