@@ -1663,7 +1663,7 @@ export default function App() {
           <aside className="absolute inset-y-0 left-0 w-[82vw] max-w-[320px] bg-zinc-950 border-r border-white/10 shadow-xl flex flex-col">
             <div className="flex items-center gap-2 p-3 border-b border-white/10">
               <button
-                className="inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10"
+                className="inline-flex items-center justify-center p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
                 onClick={() => setSidebarOpen(false)}
                 aria-label="Close sidebar"
                 title="Close"
@@ -2301,8 +2301,13 @@ function LoginScreen({ onLoggedIn }) {
   return (
     <GlassShell>
       <div className="h-full grid place-items-center p-4">
-        <form onSubmit={submit} className="w-full max-w-sm bg-white/5 border border-white/10 rounded-xl p-4">
-          <div className="text-lg font-semibold text-white mb-2">Sign in</div>
+        <div className="w-full max-w-sm">
+          <div className="flex items-center justify-center gap-2 mb-4">
+            <img src="/logo.svg" alt="Liquid Photos" className="w-8 h-8" />
+            <div className="text-xl font-semibold text-slate-100">Liquid Photos</div>
+          </div>
+          <form onSubmit={submit} className="w-full bg-white/5 border border-white/10 rounded-xl p-4">
+            <div className="text-lg font-semibold text-white mb-2">Sign in</div>
           <div className="text-xs text-slate-400 mb-4">Use your account credentials.</div>
           {error && <div className="mb-3 text-xs text-rose-300 bg-rose-950/40 border border-rose-500/30 rounded px-2 py-1">{error}</div>}
           <label className="block text-sm text-slate-300 mb-1">Username</label>
@@ -2323,6 +2328,7 @@ function LoginScreen({ onLoggedIn }) {
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
+        </div>
       </div>
     </GlassShell>
   )
