@@ -4,7 +4,7 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "orientation": "portrait-primary",
+  "orientation": "any",
   "background_color": "#0b1020",
   "theme_color": "#111827",
   "description": "Fast, glassy photo viewer with folders, shares, and favorites — installable as a PWA.",
