@@ -1272,7 +1272,7 @@ export default function App() {
                   </button>
                   {isShareMode && shareInfo?.name && (
                     <div className="max-w-[40vw] truncate text-xs text-slate-200" title={shareInfo.name}>
-                      {shareInfo.name}{shareInfo.selected ? ' (selected)' : ''}
+                      {shareInfo.name}{shareInfo.selected && !shareInfo.name.includes("'") ? ' (selected)' : ''}
                     </div>
                   )}
                 </div>
@@ -1355,8 +1355,8 @@ export default function App() {
                       <Heart className={`w-4 h-4 ${showFavorites ? 'fill-rose-400 text-rose-400' : ''}`} />
                     </button>
                   )}
-                  {/* Share button (hidden in Dates view) */}
-                  {!isShareMode && treeMode !== 'dates' && (
+                  {/* Share button (now shown in all views) */}
+                  {!isShareMode && (
                     <div ref={shareRef} className="relative">
                       <button
                         className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
@@ -1373,12 +1373,32 @@ export default function App() {
                           right: shareRef.current ? window.innerWidth - shareRef.current.getBoundingClientRect().right : 0
                         }}>
                           <div className="text-xs text-slate-300 mb-2">Share options</div>
-                          {!(treeMode === 'folders' && selected && !String(selected).startsWith('date:')) && (
-                            <div className="mb-2 text-xs text-amber-300 bg-amber-900/30 border border-amber-500/30 rounded px-2 py-1">
-                              Select Folder from Tree to Share
-                            </div>
+                          
+                          {/* Share selected photos (first option when photos are selected) */}
+                          {selectedIds.size > 0 && (
+                            <button
+                              className="w-full text-left inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15 mb-2"
+                              onClick={async () => {
+                                try {
+                                  const ids = Array.from(selectedIds)
+                                  const r = await API.shareCreate('', '', ids)
+                                  if (!r?.token) throw new Error(r?.error || 'Share failed')
+                                  const full = `${window.location.origin}${r.urlPath}`
+                                  try { await navigator.clipboard.writeText(full); showToast('Link copied to clipboard') } catch { showToast('Copy failed; please copy from modal') }
+                                  setShareOpen(false)
+                                  setSelectMode(false)
+                                  setSelectedIds(new Set())
+                                } catch (e) {
+                                  alert(e?.message || 'Failed to create share')
+                                }
+                              }}
+                            >
+                              Share Selected ({selectedIds.size} items)
+                            </button>
                           )}
-                          {(treeMode === 'folders' && selected && !String(selected).startsWith('date:')) && (
+                          
+                          {/* Folder-based sharing (only in folders view) */}
+                          {treeMode === 'folders' && selected && !String(selected).startsWith('date:') && (
                             <button
                               className="w-full text-left inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15 mb-2"
                               onClick={async () => {
@@ -1399,7 +1419,9 @@ export default function App() {
                               Share "{(String(selected).split('/').filter(Boolean).slice(-1)[0] || 'Folder')}" Folder
                             </button>
                           )}
-                          {(treeMode === 'folders' && selected && !String(selected).startsWith('date:') && selectedIds.size > 0) && (
+                          
+                          {/* Share selected from folder (only in folders view) */}
+                          {treeMode === 'folders' && selected && !String(selected).startsWith('date:') && selectedIds.size > 0 && (
                             <button
                               className="w-full text-left inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15 mb-2"
                               onClick={async () => {
@@ -1421,6 +1443,14 @@ export default function App() {
                               Share Selected from "{(String(selected).split('/').filter(Boolean).slice(-1)[0] || 'Folder')}"
                             </button>
                           )}
+                          
+                          {/* Instructions when no options available */}
+                          {selectedIds.size === 0 && !(treeMode === 'folders' && selected && !String(selected).startsWith('date:')) && (
+                            <div className="mb-2 text-xs text-amber-300 bg-amber-900/30 border border-amber-500/30 rounded px-2 py-1">
+                              Select photos or a folder to share
+                            </div>
+                          )}
+                          
                           <button
                             className="w-full text-left inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
                             onClick={async () => {
@@ -1857,7 +1887,7 @@ export default function App() {
               {shares.map(s => (
                 <div key={s.id} className="rounded border border-white/10 p-2 flex items-start gap-2">
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm text-slate-100 truncate">{s.name}{s.selected ? ' (selected)' : ''}</div>
+                    <div className="text-sm text-slate-100 truncate">{s.name}{s.selected && !s.name.includes("'") ? ' (selected)' : ''}</div>
                     <div className="text-xs text-slate-400 leading-tight" style={{ 
                       display: '-webkit-box',
                       WebkitLineClamp: 3,
@@ -2465,7 +2495,7 @@ function AdminPanel({ user, onClose }) {
                 {allShares.map(s => (
                   <div key={s.id} className="rounded border border-white/10 p-2">
                     <div className="flex items-center gap-2">
-                      <div className="font-medium truncate">{s.name}{s.selected ? ' (selected)' : ''}</div>
+                      <div className="font-medium truncate">{s.name}{s.selected && !s.name.includes("'") ? ' (selected)' : ''}</div>
                       <div className="text-xs text-slate-400 truncate">{s.folder}</div>
                       <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-400/30">{s.username || 'user ' + s.user_id}</span>
                     </div>
