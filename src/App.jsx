@@ -1321,6 +1321,8 @@ export default function App() {
                                   const full = `${window.location.origin}${r.urlPath}`
                                   try { await navigator.clipboard.writeText(full); showToast('Link copied to clipboard') } catch { showToast('Copy failed; please copy from modal') }
                                   setShareOpen(false)
+                                  setSelectMode(false)
+                                  setSelectedIds(new Set())
                                 } catch (e) {
                                   alert(e?.message || 'Failed to create share')
                                 }
@@ -1341,6 +1343,8 @@ export default function App() {
                                   const full = `${window.location.origin}${r.urlPath}`
                                   try { await navigator.clipboard.writeText(full); showToast('Link copied to clipboard') } catch { showToast('Copy failed; please copy from modal') }
                                   setShareOpen(false)
+                                  setSelectMode(false)
+                                  setSelectedIds(new Set())
                                 } catch (e) {
                                   alert(e?.message || 'Failed to create share')
                                 }
@@ -2274,7 +2278,7 @@ function AdminPanel({ user, onClose }) {
                 {allShares.map(s => (
                   <div key={s.id} className="rounded border border-white/10 p-2">
                     <div className="flex items-center gap-2">
-                      <div className="font-medium truncate">{s.name}</div>
+                      <div className="font-medium truncate">{s.name}{s.selected ? ' (selected)' : ''}</div>
                       <div className="text-xs text-slate-400 truncate">{s.folder}</div>
                       <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-400/30">{s.username || 'user ' + s.user_id}</span>
                     </div>
