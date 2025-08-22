@@ -1447,7 +1447,7 @@ export default function App() {
                           {/* Instructions when no options available */}
                           {selectedIds.size === 0 && !(treeMode === 'folders' && selected && !String(selected).startsWith('date:')) && (
                             <div className="mb-2 text-xs text-amber-300 bg-amber-900/30 border border-amber-500/30 rounded px-2 py-1">
-                              Select photos or a folder to share
+                              Multiselect/Select Folder to Share
                             </div>
                           )}
                           
