@@ -76,30 +76,6 @@ The application includes intelligent optimization to improve loading times, espe
 - Renamed folders: scanning now prunes stale entries so only the new folder name is shown
 - "Scan Media" controls are visible to admins only
 
-## HLS Video Streaming Configuration
-
-For 4K videos that may experience 500 Internal Server Error during HLS generation, you can configure the following environment variables:
-
-```bash
-# HLS Processing Configuration
-HLS_TIMEOUT_4K=30000        # Timeout for 4K video processing (ms, default: 30000)
-HLS_TIMEOUT_STD=8000        # Timeout for standard video processing (ms, default: 8000)
-HLS_QUALITY_4K=medium       # FFmpeg preset for 4K videos (default: medium)
-HLS_QUALITY_STD=veryfast    # FFmpeg preset for standard videos (default: veryfast)
-HLS_DISABLED=1              # Completely disable HLS processing (default: 0)
-```
-
-### Troubleshooting 4K HLS Issues
-
-If you experience 500 Internal Server Error with 4K videos:
-
-1. **Increase timeout**: Set `HLS_TIMEOUT_4K=60000` for 60-second timeout
-2. **Use faster preset**: Set `HLS_QUALITY_4K=veryfast` for faster processing
-3. **Check server resources**: Ensure sufficient CPU and memory for 4K processing
-4. **Monitor logs**: Check server console for detailed FFmpeg error messages
-5. **Disable HLS entirely**: Set `HLS_DISABLED=1` to bypass HLS processing and use direct video streaming
-
-### Video Playback Troubleshooting
 
 **If videos are not playing in Optimized (HLS) mode:**
 - Switch to "Original" mode using the quality toggle button in the video player
@@ -197,10 +173,10 @@ docker run -d \
   nikunjsingh/liquid-photos:latest
 ```
 
-If your files are 200,000+ items first Indexing can take upto 10 minutues, Check Docker logs and wait for a message like "[index] done: 234,895 files in 694.5s" before going to the WEB UI
+If your files are 200,000+ items first Indexing can take upto 10 minutues, check Docker logs and wait for a message like "[index] done: 234,895 files in 694.5s" before going to the WEB UI
 
 ## Notes
 
-- On first run, if no admin exists, a default admin is created from `ADMIN_USER`/`ADMIN_PASS`. That specific admin cannot be deleted.
+- Default Admin admin cannot be deleted.
 - For Docker, ensure Docker Desktop (macOS/Windows) has access to your host folders.
-- When using **Scan Path** after renames, stale entries under the scanned (or nearest existing parent) directory are pruned so only the new folder name remains.
+- When using **Scan Path** after renames, stale entries under the scanned (or nearest existing parent) directory are pruned from the DB so only the new folder name remains.
