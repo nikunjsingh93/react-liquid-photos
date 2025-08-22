@@ -344,7 +344,8 @@ function Thumbnail({ id, fname, loadedThumbnails, setLoadedThumbnails, shareToke
 /* ----- App ----- */
 export default function App() {
   // media first (used to set initial sidebar state)
-  const isSmall = useMediaQuery('(max-width: 640px)')
+  const isSmall = useMediaQuery('(max-width: 780px)')
+  const isVerySmall = useMediaQuery('(max-width: 640px)') // For optimized button visibility
 
   // auth
   const [user, setUser] = useState(null)
@@ -370,7 +371,7 @@ export default function App() {
   // Sidebar + layout
   // OPEN on desktop, COLLAPSED on mobile by default
   const [sidebarOpen, setSidebarOpen] = useState(() => {
-    try { return !window.matchMedia('(max-width: 640px)').matches } catch { return true }
+    try { return !window.matchMedia('(max-width: 780px)').matches } catch { return true }
   })
   const [sidebarWidth, setSidebarWidth] = useState(280)
 
@@ -1879,6 +1880,7 @@ export default function App() {
       {viewer.open && currentPhoto && (
         <Viewer
           isSmall={isSmall}
+          isVerySmall={isVerySmall}
           infoOpen={infoOpen}
           setInfoOpen={setInfoOpen}
           photo={currentPhoto}
@@ -1907,7 +1909,7 @@ function prevLen(arr) { return Array.isArray(arr) ? arr.length : 0 }
 
 /* ----- Viewer ----- */
 function Viewer({
-  isSmall, infoOpen, setInfoOpen, photo, truncatedName, imgMaxHeight,
+  isSmall, isVerySmall, infoOpen, setInfoOpen, photo, truncatedName, imgMaxHeight,
   onPrev, onNext, onClose, onDownload, ensureMeta, meta, onFullscreen,
   onTouchStart, onTouchMove, onTouchEnd, buildImageUrl,
   isFavorite, toggleFavorite
@@ -1962,9 +1964,9 @@ function Viewer({
         {/* Header when not browser fullscreen */}
         {!isBrowserFullscreen && (
           <div className="relative flex items-center px-4" style={{ height: HEADER_H }}>
-            <div className="pointer-events-none sm:absolute sm:left-1/2 sm:-translate-x-1/2 sm:text-center sm:max-w-[60vw] min-w-0 flex-1">
+            <div className="pointer-events-none min-[1000px]:absolute min-[1000px]:left-1/2 min-[1000px]:-translate-x-1/2 min-[1000px]:text-center min-[1000px]:max-w-[60vw] min-w-0 flex-1">
               {(isVideo || imageUrl) && (
-                <div className="truncate text-sm text-white text-left sm:text-center">
+                <div className="truncate text-sm text-white text-left min-[1000px]:text-center">
                   {truncatedName}
                 </div>
               )}
@@ -1993,8 +1995,8 @@ function Viewer({
                       <Monitor className="w-5 h-5 text-white" />
                     </button>
                   )}
-                  {/* Hide optimized button on mobile */}
-                  {!isSmall && (
+                  {/* Hide optimized button on very small screens */}
+                  {!isVerySmall && (
                     <button
                       className={`px-3 py-1 rounded-full border border-white/10 ${useFullRes ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
                       onClick={() => { setUseFullRes(!useFullRes); setImageLoading(true) }}
@@ -2005,7 +2007,7 @@ function Viewer({
                   )}
                 </>
               )}
-              {isVideo && !isSmall && (
+              {isVideo && !isVerySmall && (
                 <button
                   className={`px-3 py-1 rounded-full border border-white/10 ${quality ? 'bg-white/20' : 'bg-white/10 hover:bg-white/20'}`}
                   onClick={() => { setQuality(q => (q === 'original' ? 'reduced' : 'original')); setImageLoading(true) }}
