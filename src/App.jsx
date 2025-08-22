@@ -999,7 +999,7 @@ export default function App() {
                  {user?.is_admin && (
                  <>
                    <button
-                     className="ml-auto inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg border border-white/10 bg-white/10 hover:bg-white/15"
+                     className="ml-auto inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border border-white/10 bg-white/10 hover:bg-white/15"
                      title="Scan Media"
                      onClick={async () => { setScanMenuAnchor('sidebar'); setScanMenuOpen(v => !v); if (!scanTree) await loadScanTree() }}
                    >
@@ -1009,7 +1009,7 @@ export default function App() {
                     <div className="fixed left-1/2 -translate-x-1/2 top-[72px] z-[1000] w-[90vw] max-w-[520px] max-h-[70vh] rounded-lg border border-white/10 bg-zinc-950 shadow-2xl">
                       <div className="p-3 flex items-center gap-2">
                         <button
-                          className={`inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg border border-white/10 ${scanning ? 'bg-white/20' : 'bg-white/10 hover:bg-white/15'}`}
+                          className={`inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border border-white/10 ${scanning ? 'bg-white/20' : 'bg-white/10 hover:bg-white/15'}`}
                           disabled={scanning}
                           onClick={async () => {
                             if (scanning) return
@@ -1032,7 +1032,7 @@ export default function App() {
                         </button>
                         {scanning && (
                           <button
-                            className="ml-2 inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/15 text-rose-300"
+                            className="ml-2 inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/15 text-rose-300"
                             onClick={async () => { try { await API.cancelScan() } catch {} }}
                             title="Cancel Scanning"
                           >
@@ -1063,13 +1063,13 @@ export default function App() {
                         </div>
                         <div className="mt-3 flex items-center justify-end gap-2">
                           <button
-                            className="text-xs px-3 py-1.5 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                            className="text-xs px-3 py-1.5 rounded-full bg-white/10 border border-white/10 hover:bg-white/15"
                             onClick={() => { setScanMenuOpen(false); setScanSelectedPath('') }}
                           >
                             Cancel
                           </button>
                           <button
-                            className={`text-xs px-3 py-1.5 rounded ${scanSelectedPath ? 'bg-emerald-500/20 hover:bg-emerald-500/25 border-emerald-500/40 text-emerald-300' : 'bg-white/10 border-white/10 opacity-50 cursor-not-allowed'} border`}
+                            className={`text-xs px-3 py-1.5 rounded-full ${scanSelectedPath ? 'bg-emerald-500/20 hover:bg-emerald-500/25 border-emerald-500/40 text-emerald-300' : 'bg-white/10 border-white/10 opacity-50 cursor-not-allowed'} border`}
                             disabled={!scanSelectedPath || scanning}
                             onClick={async () => {
                               if (!scanSelectedPath) return
@@ -1679,7 +1679,7 @@ export default function App() {
               {user?.is_admin && (
                 <div className="relative ml-auto">
                   <button
-                    className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg border border-white/10 bg-white/10 hover:bg-white/15"
+                    className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border border-white/10 bg-white/10 hover:bg-white/15"
                     title="Scan Media"
                     onClick={async () => { setScanMenuAnchor('sidebar'); setScanMenuOpen(v => !v); if (!scanTree) await loadScanTree() }}
                   >
@@ -1689,7 +1689,7 @@ export default function App() {
                     <div className="fixed left-1/2 -translate-x-1/2 top-[64px] z-[1000] w-[90vw] max-w-[340px] max-h-[70vh] rounded-lg border border-white/10 bg-zinc-950 shadow-2xl">
                       <div className="p-3 border-b border-white/10 flex items-center gap-2">
                         <button
-                          className={`inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg border border-white/10 ${scanning ? 'bg-white/20' : 'bg-white/10 hover:bg-white/15'}`}
+                          className={`inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border border-white/10 ${scanning ? 'bg-white/20' : 'bg-white/10 hover:bg-white/15'}`}
                           disabled={scanning}
                           onClick={async () => {
                             if (scanning) return
@@ -1712,7 +1712,7 @@ export default function App() {
                         </button>
                         {scanning && (
                           <button
-                            className="ml-2 inline-flex items-center gap-2 text-xs px-2 py-1 rounded-lg border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/15 text-rose-300"
+                            className="ml-2 inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/15 text-rose-300"
                             onClick={async () => { try { await API.cancelScan() } catch {} }}
                             title="Cancel Scanning"
                           >
@@ -1743,13 +1743,13 @@ export default function App() {
                         </div>
                         <div className="mt-3 flex items-center justify-end gap-2">
                           <button
-                            className="text-xs px-3 py-1.5 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                            className="text-xs px-3 py-1.5 rounded-full bg-white/10 border border-white/10 hover:bg-white/15"
                             onClick={() => { setScanMenuOpen(false); setScanSelectedPath('') }}
                           >
                             Cancel
                           </button>
                           <button
-                            className={`text-xs px-3 py-1.5 rounded ${scanSelectedPath ? 'bg-emerald-500/20 hover:bg-emerald-500/25 border-emerald-500/40 text-emerald-300' : 'bg-white/10 border-white/10 opacity-50 cursor-not-allowed'} border`}
+                            className={`text-xs px-3 py-1.5 rounded-full ${scanSelectedPath ? 'bg-emerald-500/20 hover:bg-emerald-500/25 border-emerald-500/40 text-emerald-300' : 'bg-white/10 border-white/10 opacity-50 cursor-not-allowed'} border`}
                             disabled={!scanSelectedPath || scanning}
                             onClick={async () => {
                               if (!scanSelectedPath) return
@@ -1881,7 +1881,7 @@ export default function App() {
             <div className="flex items-center gap-2 mb-3">
               <Share className="w-5 h-5" />
               <div className="text-sm font-semibold">All shares</div>
-              <button className="ml-auto p-2 rounded bg-white/10 border border-white/10" onClick={() => setShareModalOpen(false)}><X className="w-4 h-4" /></button>
+              <button className="ml-auto p-2 rounded-full bg-white/10 border border-white/10" onClick={() => setShareModalOpen(false)}><X className="w-4 h-4" /></button>
             </div>
             {/* Always show shares list */}
             <div className="space-y-2">
@@ -1904,9 +1904,9 @@ export default function App() {
                     <div className="text-[10px] text-slate-500">{new Date(s.created_at).toLocaleString()}</div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <button className="text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15" onClick={async()=>{ try { await navigator.clipboard.writeText(`${window.location.origin}${s.urlPath}`); showToast('Link copied to clipboard') } catch {} }}>Copy link</button>
-                    <a className="text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15" href={s.urlPath} target="_blank" rel="noreferrer">Open</a>
-                    <button className="text-xs px-2 py-1 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300 hover:bg-rose-500/15" onClick={async()=>{ if (!confirm('Delete this share?')) return; try { const r = await API.shareDelete(s.id); if (r?.ok) setShares(prev=>prev.filter(x=>x.id!==s.id)) } catch {} }}>Delete</button>
+                    <button className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/15" onClick={async()=>{ try { await navigator.clipboard.writeText(`${window.location.origin}${s.urlPath}`); showToast('Link copied to clipboard') } catch {} }}>Copy link</button>
+                    <a className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/15" href={s.urlPath} target="_blank" rel="noreferrer">Open</a>
+                    <button className="text-xs px-2 py-1 rounded-full bg-rose-500/10 border border-rose-500/30 text-rose-300 hover:bg-rose-500/15" onClick={async()=>{ if (!confirm('Delete this share?')) return; try { const r = await API.shareDelete(s.id); if (r?.ok) setShares(prev=>prev.filter(x=>x.id!==s.id)) } catch {} }}>Delete</button>
                   </div>
                 </div>
               ))}
@@ -2327,7 +2327,7 @@ function LoginScreen({ onLoggedIn }) {
           />
           <button
             type="submit" disabled={busy}
-            className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+            className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/15"
           >
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
@@ -2414,7 +2414,7 @@ function AdminPanel({ user, onClose }) {
         <div className="text-sm font-semibold text-slate-100">Admin Panel</div>
         <div className="ml-auto" />
         <button
-          className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+          className="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/15"
           onClick={onClose}
         >
           Back to Library
@@ -2445,7 +2445,7 @@ function AdminPanel({ user, onClose }) {
                 <input placeholder="e.g. 2024/Trips/Paris" className="w-full px-2 py-1.5 rounded bg-white/10 border border-white/10" value={form.path} onChange={e=>setForm(f=>({...f, path:e.target.value}))}/>
               </div>
               <div className="pt-2">
-                <button disabled={creating} className="inline-flex items-center gap-2 px-3 py-1.5 rounded bg-white/10 border border-white/10 hover:bg-white/15" onClick={createUser}>
+                <button disabled={creating} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/10 border border-white/10 hover:bg-white/15" onClick={createUser}>
                   {creating ? 'Creating…' : 'Create user'}
                 </button>
               </div>
@@ -2475,7 +2475,7 @@ function AdminPanel({ user, onClose }) {
                         </div>
                         <div className="ml-auto flex items-center gap-2">
                           <button
-                            className={`inline-flex items-center gap-1 px-2 py-1 rounded border ${isSelf || isProtected ? 'opacity-40 cursor-not-allowed' : 'hover:bg-rose-500/15'} bg-rose-500/10 border-rose-500/30 text-rose-300`}
+                            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border ${isSelf || isProtected ? 'opacity-40 cursor-not-allowed' : 'hover:bg-rose-500/15'} bg-rose-500/10 border-rose-500/30 text-rose-300`}
                             title={isProtected ? 'Default admin cannot be deleted' : (isSelf ? 'You cannot delete your own account' : 'Delete user')}
                             disabled={isSelf || isProtected || deletingId === u.id}
                             onClick={() => deleteUser(u.id, u.username)}
@@ -2496,7 +2496,7 @@ function AdminPanel({ user, onClose }) {
           <div className="bg-white/5 border border-white/10 rounded-xl p-3 sm:col-span-2">
             <div className="flex items-center gap-2 mb-2">
               <div className="text-sm font-semibold">All Shares</div>
-              <button className="ml-auto text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15" onClick={loadAllShares}>Refresh</button>
+              <button className="ml-auto text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/15" onClick={loadAllShares}>Refresh</button>
             </div>
             {loadingShares ? (
               <div className="text-slate-400 text-sm">Loading shares…</div>
@@ -2510,9 +2510,9 @@ function AdminPanel({ user, onClose }) {
                       <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-400/30">{s.username || 'user ' + s.user_id}</span>
                     </div>
                     <div className="mt-2 flex items-center gap-2">
-                      <a className="text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15" href={s.urlPath || `/s/${s.token}`} target="_blank" rel="noreferrer">Open</a>
-                      <button className="text-xs px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15" onClick={async()=>{ try { await navigator.clipboard.writeText(`${window.location.origin}/s/${s.token}`) } catch {} }}>Copy link</button>
-                      <button className="ml-auto text-xs px-2 py-1 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300 hover:bg-rose-500/15" onClick={async()=>{ if(!confirm('Delete this share?')) return; try { const r = await API.shareDelete(s.id); if(r?.ok) setAllShares(prev=>prev.filter(x=>x.id!==s.id)) } catch{} }}>Delete</button>
+                      <a className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/15" href={s.urlPath || `/s/${s.token}`} target="_blank" rel="noreferrer">Open</a>
+                      <button className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/15" onClick={async()=>{ try { await navigator.clipboard.writeText(`${window.location.origin}/s/${s.token}`) } catch {} }}>Copy link</button>
+                      <button className="ml-auto text-xs px-2 py-1 rounded-full bg-rose-500/10 border border-rose-500/30 text-rose-300 hover:bg-rose-500/15" onClick={async()=>{ if(!confirm('Delete this share?')) return; try { const r = await API.shareDelete(s.id); if(r?.ok) setAllShares(prev=>prev.filter(x=>x.id!==s.id)) } catch{} }}>Delete</button>
                     </div>
                   </div>
                 ))}
