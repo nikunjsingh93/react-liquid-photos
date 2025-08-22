@@ -1244,7 +1244,7 @@ export default function App() {
                 {/* Toggle */}
                 {!isShareMode && (
                 <button
-                  className="inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10"
+                  className="inline-flex items-center justify-center p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
                   onClick={() => setSidebarOpen(v => !v)}
                   aria-label="Toggle sidebar"
                 >
@@ -1263,7 +1263,7 @@ export default function App() {
                 {/* Multiselect toggle + shared album name */}
                 <div className="flex items-center gap-2">
                   <button
-                    className={`inline-flex items-center gap-2 px-2 py-1 rounded border ${selectMode ? 'bg-white/20 border-white/20' : 'bg-white/10 border-white/10 hover:bg-white/15'}`}
+                    className={`inline-flex items-center gap-2 px-2 py-1 rounded-full border ${selectMode ? 'bg-white/20 border-white/20' : 'bg-white/10 border-white/10 hover:bg-white/20'}`}
                     onClick={() => setSelectMode(v => { const nv = !v; if (!nv) setSelectedIds(new Set()); return nv })}
                     title="Multi-select"
                   >
@@ -1281,7 +1281,7 @@ export default function App() {
                 {!isShareMode && (
                 <div>
                   <select
-                    className={`text-xs px-2 py-1 rounded border ${loading ? 'bg-white/5 border-white/5 opacity-50 cursor-not-allowed' : 'bg-white/10 border-white/10 hover:bg-white/15'}`}
+                    className={`text-xs px-2 py-1 rounded-full border ${loading ? 'bg-white/5 border-white/5 opacity-50 cursor-not-allowed' : 'bg-white/10 border-white/10 hover:bg-white/20'}`}
                     value={mediaFilter}
                     disabled={loading}
                     onChange={async (e) => {
@@ -1347,7 +1347,7 @@ export default function App() {
                   {/* Favorites button */}
                   {!isShareMode && (
                     <button
-                      className={`inline-flex items-center gap-2 px-2 py-1 rounded border ${showFavorites ? 'bg-rose-500/20 border-rose-500/30 text-rose-300' : 'bg-white/10 border-white/10 hover:bg-white/15'}`}
+                      className={`inline-flex items-center gap-2 px-2 py-1 rounded-full border ${showFavorites ? 'bg-rose-500/20 border-rose-500/30 text-rose-300' : 'bg-white/10 border-white/10 hover:bg-white/20'}`}
                       onClick={() => setShowFavorites(v => !v)}
                       title={showFavorites ? 'Show all items' : 'Show favorites'}
                       aria-pressed={showFavorites}
@@ -1359,7 +1359,7 @@ export default function App() {
                   {!isShareMode && (
                     <div ref={shareRef} className="relative">
                       <button
-                        className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                        className="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
                         onClick={() => setShareOpen(v => !v)}
                         title="Share"
                         aria-haspopup="menu"
@@ -1377,7 +1377,7 @@ export default function App() {
                           {/* Share selected photos (first option when photos are selected) */}
                           {selectedIds.size > 0 && (
                             <button
-                              className="w-full text-left inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15 mb-2"
+                              className="w-full text-left inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/20 mb-2"
                               onClick={async () => {
                                 try {
                                   const ids = Array.from(selectedIds)
@@ -1400,7 +1400,7 @@ export default function App() {
                           {/* Folder-based sharing (only in folders view) */}
                           {treeMode === 'folders' && selected && !String(selected).startsWith('date:') && (
                             <button
-                              className="w-full text-left inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15 mb-2"
+                              className="w-full text-left inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/20 mb-2"
                               onClick={async () => {
                                 try {
                                   const folderName = String(selected).split('/').filter(Boolean).slice(-1)[0] || 'Folder'
@@ -1423,7 +1423,7 @@ export default function App() {
                           {/* Share selected from folder (only in folders view) */}
                           {treeMode === 'folders' && selected && !String(selected).startsWith('date:') && selectedIds.size > 0 && (
                             <button
-                              className="w-full text-left inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15 mb-2"
+                              className="w-full text-left inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/20 mb-2"
                               onClick={async () => {
                                 try {
                                   const folderName = (String(selected).split('/').filter(Boolean).slice(-1)[0] || 'Folder')
@@ -1452,7 +1452,7 @@ export default function App() {
                           )}
                           
                           <button
-                            className="w-full text-left inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                            className="w-full text-left inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
                             onClick={async () => {
                               setShareOpen(false)
                               setShareModalOpen(true)
@@ -1469,7 +1469,7 @@ export default function App() {
                   )}
                   <div ref={resizeRef} className="relative">
                     <button
-                      className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                      className="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
                       onClick={() => setResizeOpen(v => !v)}
                       title="Resize grid"
                       aria-haspopup="menu"
@@ -1485,14 +1485,14 @@ export default function App() {
                         <div className="text-xs text-slate-300 mb-2">Resize grid</div>
                         <div className="flex items-center gap-2">
                           <button
-                            className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                            className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
                             onClick={() => { setResizing(true); setTileMin(v => Math.min(640, v + 20)) }}
                             title="Larger"
                           >
                             <Plus className="w-4 h-4" />
                           </button>
                           <button
-                            className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+                            className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
                             onClick={() => { setResizing(true); setTileMin(v => Math.max(60, v - 20)) }}
                             title="Smaller"
                           >
@@ -1523,7 +1523,7 @@ export default function App() {
                 <div className="text-sm">{selectedIds.size} selected</div>
                 <div className="flex items-center gap-2">
                   <button
-                    className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
                     onClick={downloadZip}
                     disabled={downloadLoading}
                     title="Download .zip"
@@ -1536,7 +1536,7 @@ export default function App() {
                     .zip
                   </button>
                   <button
-                    className="inline-flex items-center justify-center p-2 rounded bg-white/10 border border-white/10 hover:bg-white/20"
+                    className="inline-flex items-center justify-center p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
                     onClick={() => { setSelectMode(false); setSelectedIds(new Set()) }}
                     title="Exit select"
                   >
