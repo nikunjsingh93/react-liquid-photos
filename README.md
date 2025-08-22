@@ -119,8 +119,8 @@ Install these on the host (for Docker images, they are included):
 Prerequisites:
 - Docker
 
-1. Local Docker run from your folder root:
-   ```bash
+1. Run from your folder root:
+```bash
 docker build -t liquid-photos:latest .
 
 docker stop liquid-photos || true
@@ -134,16 +134,15 @@ docker run -d \
   -e PORT=6363 \
   -e ADMIN_USER=admin \
   -e ADMIN_PASS=admin123 \
-  -v "/Users/m4air/Pictures":/pictures:ro \ # <- Change it your  local pictures folder
+  -v "/Users/m4air/Pictures":/pictures:ro \  # <- Change it your local pictures folder
   -v "/Users/m4air/liquid-photos-cache":/app/.cache \   # <- Change it your local cache folder
   liquid-photos:latest
 
-   ```
+```
 
 2. Open `http://localhost:6363`
 
 ## Deploy to Server using Docker
-
 
 ### Docker Compose
 
