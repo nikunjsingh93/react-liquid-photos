@@ -22,6 +22,9 @@ A fast, modern photo and video gallery application built with React and Node.js.
   - Click the heart icon in the full-screen viewer to add/remove from favorites
   - Access your favorite media through the dedicated favorites section
   - Quick way to organize and find your most cherished photos and videos
+- **PWA Support**: Install as a Progressive Web App
+  - Install Liquid Photos directly to your device's home screen
+  - Native app-like experience with full-screen mode
 - **Admin Tools**:
   - "Scan Media" menu with **Full Rescan** and **Scan Path** (admin-only)
   - Create users with an **Admin** toggle
