@@ -31,10 +31,6 @@ Liquid Photos provides intuitive touch gestures for mobile devices, making it ea
   - Swipe right to go to the previous photo
   - Works anywhere in the full-screen viewer area
 
-- **Swipe Up**: Open the information panel
-  - Shows EXIF data, file details, and metadata
-  - Works from any position in the viewer
-
 - **Swipe Down**: Close panels or exit viewer
   - If info panel is open: closes the info panel
   - If info panel is closed: exits the full-screen viewer
@@ -42,7 +38,6 @@ Liquid Photos provides intuitive touch gestures for mobile devices, making it ea
 ### Grid View Interactions
 
 - **Tap**: Open photo in full-screen viewer
-- **Long Press**: Enter multi-select mode (mobile)
 - **Multi-select**: Tap photos to select multiple items for batch download
 - **Responsive Design**: Optimized for both portrait and landscape orientations
 
@@ -75,7 +70,6 @@ The application includes intelligent optimization to improve loading times, espe
 - **Scan Path**: Re-index only a selected folder path (useful after adding/renaming a folder)
 - Renamed folders: scanning now prunes stale entries so only the new folder name is shown
 - "Scan Media" controls are visible to admins only
-
 
 **If videos are not playing in Optimized (HLS) mode:**
 - Switch to "Original" mode using the quality toggle button in the video player
