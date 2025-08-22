@@ -196,6 +196,8 @@ docker run -d \
   nikunjsingh/liquid-photos:latest
 ```
 
+## If your files are 200,000+ items first Indexing can take upto 10 minutues, Check Docker logs and wait for [index] done: 234,895 files in 694.5s before going to the WEB UI
+
 ## Notes
 
 - On first run, if no admin exists, a default admin is created from `ADMIN_USER`/`ADMIN_PASS`. That specific admin cannot be deleted.
