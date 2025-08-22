@@ -322,7 +322,16 @@ async function ensureHeicDecodedPreview(absPath) {
         console.log('[heic] success:', absPath)
         resolve(out)
       } else {
-        console.error('[heic] failed:', absPath, 'code:', code, 'stderr:', stderrBuf)
+        // Check if it's a corruption/unsupported format error
+        const isCorruptionError = stderrBuf.includes('bad seek') || 
+                                 stderrBuf.includes('No decoding plugin installed') ||
+                                 stderrBuf.includes('compression format')
+        
+        if (isCorruptionError) {
+          console.warn('[heic] corrupted/unsupported format:', absPath, 'stderr:', stderrBuf.trim())
+        } else {
+          console.error('[heic] failed:', absPath, 'code:', code, 'stderr:', stderrBuf)
+        }
         try { await fsp.unlink(out) } catch {}
         resolve(null)
       }
@@ -523,10 +532,17 @@ async function ensureThumb(absPath) {
             // Fall back to heif-convert
             const prev = await ensureHeicDecodedPreview(absPath)
             if (!prev) {
-              console.error('[thumb] HEIC preview failed:', absPath)
-              throw e
+              // Try FFmpeg as last resort for corrupted HEIC files
+              console.log('[thumb] HEIC preview failed, trying FFmpeg fallback:', absPath)
+              const ffmpegPrev = await ensureFfmpegImagePreview(absPath)
+              if (!ffmpegPrev) {
+                console.error('[thumb] All HEIC processing methods failed:', absPath)
+                throw e
+              }
+              await sharp(ffmpegPrev).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
+            } else {
+              await sharp(prev).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
             }
-            await sharp(prev).rotate().resize({ width: THUMB_WIDTH, withoutEnlargement: true }).webp({ quality: 82 }).toFile(out)
           }
         } else {
           // Try ffmpeg fallback for problematic JPEG files
@@ -578,10 +594,17 @@ async function ensureView(absPath) {
             // Fall back to heif-convert
             const prev = await ensureHeicDecodedPreview(absPath)
             if (!prev) {
-              console.error('[view] HEIC preview failed:', absPath)
-              throw e
+              // Try FFmpeg as last resort for corrupted HEIC files
+              console.log('[view] HEIC preview failed, trying FFmpeg fallback:', absPath)
+              const ffmpegPrev = await ensureFfmpegImagePreview(absPath)
+              if (!ffmpegPrev) {
+                console.error('[view] All HEIC processing methods failed:', absPath)
+                throw e
+              }
+              await sharp(ffmpegPrev).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
+            } else {
+              await sharp(prev).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
             }
-            await sharp(prev).rotate().resize({ width: VIEW_WIDTH, withoutEnlargement: true }).webp({ quality: 85 }).toFile(out)
           }
         } else {
           // Try ffmpeg fallback for problematic JPEG files
