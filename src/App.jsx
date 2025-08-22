@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import Hls from 'hls.js'
 import {
   FolderTree, RefreshCcw, Image as ImageIcon, ChevronRight, ChevronDown, X,
-  Maximize2, Download, Menu, Plus, Minus, Info, CheckSquare, LogOut, Shield, Trash2, Play, Monitor, Share
+  Maximize2, Download, Menu, Plus, Minus, Info, CheckSquare, LogOut, Shield, Trash2, Play, Monitor, Share, Heart
 } from 'lucide-react'
 
 /* Same-origin base (Vite proxy handles /api, /thumb, /view, /media, /download) */
@@ -335,6 +335,8 @@ function Thumbnail({ id, fname, loadedThumbnails, setLoadedThumbnails, shareToke
         onLoad={handleLoad}
         onError={handleError}
       />
+      {/* Overlay click blocker for viewer buttons placed above */}
+      <div className="pointer-events-none absolute inset-0" />
     </div>
   )
 }
@@ -390,6 +392,58 @@ export default function App() {
   const [initialLoaded, setInitialLoaded] = useState(false)
   // filter for media type
   const [mediaFilter, setMediaFilter] = useState('all')
+
+  // Favorites (server-backed per-user)
+  const [favoriteIds, setFavoriteIds] = useState(new Set())
+  const [favoriteItems, setFavoriteItems] = useState(new Map())
+  const [showFavorites, setShowFavorites] = useState(false)
+
+  // Load favorites on login
+  useEffect(() => {
+    (async () => {
+      if (!user) { setFavoriteIds(new Set()); setFavoriteItems(new Map()); return }
+      try {
+        const r = await fetch(apiUrl('/api/favorites'), { credentials: 'include' }).then(res => res.json())
+        const ids = Array.isArray(r?.items) ? r.items : []
+        setFavoriteIds(new Set(ids))
+        // Lazy-load favorite items page 1 for quick count/sorting
+        const fp = await fetch(apiUrl('/api/favorites/photos?page=1&pageSize=200'), { credentials: 'include' }).then(res => res.json())
+        const map = new Map()
+        for (const it of (fp?.items || [])) { map.set(it.id, it) }
+        setFavoriteItems(map)
+      } catch {
+        setFavoriteIds(new Set())
+        setFavoriteItems(new Map())
+      }
+    })()
+  }, [user])
+
+  const isFavorite = useCallback((id) => favoriteIds.has(id), [favoriteIds])
+  const toggleFavorite = useCallback(async (photo) => {
+    if (!photo || !photo.id || !user) return
+    const id = photo.id
+    const adding = !favoriteIds.has(id)
+    // optimistic update
+    setFavoriteIds(prev => { const n = new Set(prev); if (adding) n.add(id); else n.delete(id); return n })
+    setFavoriteItems(prev => { const n = new Map(prev); if (adding) n.set(id, photo); else n.delete(id); return n })
+    try {
+      const url = apiUrl(`/api/favorites/${id}`)
+      const res = await fetch(url, { method: adding ? 'POST' : 'DELETE', credentials: 'include' })
+      if (!res.ok) throw new Error('failed')
+    } catch {
+      // rollback
+      setFavoriteIds(prev => { const n = new Set(prev); if (adding) n.delete(id); else n.add(id); return n })
+      setFavoriteItems(prev => { const n = new Map(prev); if (adding) n.delete(id); else n.set(id, photo); return n })
+    }
+  }, [favoriteIds, user])
+
+  const favoritesList = useMemo(() => {
+    const arr = Array.from(favoriteItems.values())
+    arr.sort((a, b) => Number(b.mtime || 0) - Number(a.mtime || 0))
+    return arr
+  }, [favoriteItems])
+
+  const visiblePhotos = useMemo(() => showFavorites ? favoritesList : photos, [showFavorites, favoritesList, photos])
 
   // Viewer & meta
   const [viewer, setViewer] = useState({ open: false, index: 0 })
@@ -643,7 +697,7 @@ export default function App() {
     } 
   }
   const closeViewer = () => { setViewer({ open: false, index: 0 }); setInfoOpen(false) }
-  const next = () => setViewer(v => ({ ...v, index: Math.min(v.index + 1, photos.length - 1) }))
+  const next = () => setViewer(v => ({ ...v, index: Math.min(v.index + 1, visiblePhotos.length - 1) }))
   const prev = () => setViewer(v => ({ ...v, index: Math.max(v.index - 1, 0) }))
 
   // Full screen helpers
@@ -682,7 +736,7 @@ export default function App() {
       document.msExitFullscreen()
     }
   }
-  const nextFullscreen = () => setViewer(v => ({ ...v, index: Math.min(v.index + 1, photos.length - 1) }))
+  const nextFullscreen = () => setViewer(v => ({ ...v, index: Math.min(v.index + 1, visiblePhotos.length - 1) }))
   const prevFullscreen = () => setViewer(v => ({ ...v, index: Math.max(v.index - 1, 0) }))
 
   // meta
@@ -707,10 +761,10 @@ export default function App() {
   }, [])
   useEffect(() => {
     if (!viewer.open) return
-    const cur = photos[viewer.index]
+    const cur = visiblePhotos[viewer.index]
     if (!cur) return
     if (infoOpen) { ensureMeta(cur.id) }
-  }, [viewer.open, viewer.index, infoOpen, photos, ensureMeta])
+  }, [viewer.open, viewer.index, infoOpen, visiblePhotos, ensureMeta])
 
   // keys
   useEffect(() => {
@@ -754,7 +808,7 @@ export default function App() {
 
   // download single
   const downloadActive = useCallback(() => {
-    const current = photos[viewer.index]
+    const current = visiblePhotos[viewer.index]
     if (!current) return
     const a = document.createElement('a')
     a.href = isShareMode ? apiUrl(`/s/${shareToken}/download/${current.id}`) : apiUrl(`/download/${current.id}`)
@@ -762,7 +816,7 @@ export default function App() {
     document.body.appendChild(a)
     a.click()
     a.remove()
-  }, [photos, viewer.index, isShareMode, shareToken])
+  }, [visiblePhotos, viewer.index, isShareMode, shareToken])
 
   // touch swipe
   const touchStartRef = useRef({ x: 0, y: 0, t: 0 })
@@ -910,7 +964,7 @@ export default function App() {
     )
   }
 
-  const currentPhoto = viewer.open ? photos[viewer.index] : null
+  const currentPhoto = viewer.open ? visiblePhotos[viewer.index] : null
   const truncatedName = currentPhoto ? ellipsizeWords(currentPhoto.fname || '', 8) : ''
   const imgMaxHeight = isSmall && infoOpen
     ? `calc(100vh - ${HEADER_H}px - ${MOBILE_INFO_VH}vh - 24px)`
@@ -1287,6 +1341,17 @@ export default function App() {
                 
                 {/* Right side controls */}
                 <div className="ml-auto flex items-center gap-2">
+                  {/* Favorites button */}
+                  {!isShareMode && (
+                    <button
+                      className={`inline-flex items-center gap-2 px-2 py-1 rounded border ${showFavorites ? 'bg-rose-500/20 border-rose-500/30 text-rose-300' : 'bg-white/10 border-white/10 hover:bg-white/15'}`}
+                      onClick={() => setShowFavorites(v => !v)}
+                      title={showFavorites ? 'Show all items' : 'Show favorites'}
+                      aria-pressed={showFavorites}
+                    >
+                      <Heart className={`w-4 h-4 ${showFavorites ? 'fill-rose-400 text-rose-400' : ''}`} />
+                    </button>
+                  )}
                   {/* Share button (hidden in Dates view) */}
                   {!isShareMode && treeMode !== 'dates' && (
                     <div ref={shareRef} className="relative">
@@ -1405,14 +1470,14 @@ export default function App() {
                     )}
                   </div>
 
-                  <div className="text-xs text-slate-300 shrink-0 px-2 py-1 rounded bg-white/5 border border-white/10">
+                  <div className="hidden sm:block text-xs text-slate-300 shrink-0 px-2 py-1 rounded bg-white/5 border border-white/10">
                     {loading ? (
                       <div className="flex items-center gap-2">
                         <div className="w-3 h-3 border border-slate-400 border-t-transparent rounded-full animate-spin"></div>
                         <span>Loading...</span>
                       </div>
                     ) : (
-                      `${total.toLocaleString()} items`
+                      `${(showFavorites ? favoritesList.length : total).toLocaleString()} items`
                     )}
                   </div>
                 </div>
@@ -1479,8 +1544,9 @@ export default function App() {
                   {(() => {
                     const nodes = []
                     let lastDateKey = ''
-                    for (let i = 0; i < photos.length; i++) {
-                      const p = photos[i]
+                    const list = visiblePhotos
+                    for (let i = 0; i < list.length; i++) {
+                      const p = list[i]
                       const dateKey = new Date(Number(p.mtime)).toLocaleDateString('en-US', { timeZone: 'UTC' })
                       if (dateKey !== lastDateKey) {
                         nodes.push(
@@ -1510,6 +1576,11 @@ export default function App() {
                             setLoadedThumbnails={setLoadedThumbnails}
                             shareToken={isShareMode ? shareToken : ''}
                           />
+                          {isFavorite(p.id) && (
+                            <div className="absolute right-1 top-1 bg-black/50 rounded p-0.5">
+                              <Heart className="w-3 h-3 text-rose-400 fill-rose-400" />
+                            </div>
+                          )}
                           {isRaw && (
                             <div className="absolute left-1 top-1 bg-black/60 text-white text-[7px] px-1.5 py-0.5 rounded">
                               RAW
@@ -1815,6 +1886,8 @@ export default function App() {
           onTouchMove={onTouchMove}
           onTouchEnd={onTouchEnd}
           buildImageUrl={buildImageUrl}
+          isFavorite={isFavorite}
+          toggleFavorite={toggleFavorite}
         />
       )}
     </GlassShell>
@@ -1827,8 +1900,10 @@ function prevLen(arr) { return Array.isArray(arr) ? arr.length : 0 }
 function Viewer({
   isSmall, infoOpen, setInfoOpen, photo, truncatedName, imgMaxHeight,
   onPrev, onNext, onClose, onDownload, ensureMeta, meta, onFullscreen,
-  onTouchStart, onTouchMove, onTouchEnd, buildImageUrl
+  onTouchStart, onTouchMove, onTouchEnd, buildImageUrl,
+  isFavorite, toggleFavorite
 }) {
+  // Favorite helpers available via props
   const [useFullRes, setUseFullRes] = useState(false)
   const [imageLoading, setImageLoading] = useState(true)
   const isVideo = String(photo?.kind) === 'video'
@@ -1886,6 +1961,18 @@ function Viewer({
               )}
             </div>
             <div className="ml-auto flex items-center gap-2">
+              {/* Favorite toggle in viewer (left of Info) */}
+              {photo && (
+                <button
+                  className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                  onClick={() => toggleFavorite && toggleFavorite(photo)}
+                  title="Favorite"
+                >
+                  {isFavorite && isFavorite(photo.id)
+                    ? <Heart className="w-6 h-6 text-rose-400 fill-rose-400" />
+                    : <Heart className="w-6 h-6" />}
+                </button>
+              )}
               {!isVideo && (
                 <>
                   {!/iPad|iPhone|iPod/.test(navigator.userAgent) && (
@@ -1915,13 +2002,16 @@ function Viewer({
                   {quality === 'original' ? 'Original' : 'Optimized'}
                 </button>
               )}
-              <button
-                className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
-                onClick={async () => { setInfoOpen(v => !v); if (!infoOpen) await ensureMeta(photo.id) }}
-                title="Info"
-              >
-                <Info className="w-6 h-6 text-white" />
-              </button>
+              {/* Hide info button on mobile */}
+              {!isSmall && (
+                <button
+                  className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                  onClick={async () => { setInfoOpen(v => !v); if (!infoOpen) await ensureMeta(photo.id) }}
+                  title="Info"
+                >
+                  <Info className="w-6 h-6 text-white" />
+                </button>
+              )}
               <button
                 className="p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
                 onClick={onDownload}

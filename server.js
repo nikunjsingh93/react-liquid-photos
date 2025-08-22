@@ -163,6 +163,20 @@ CREATE INDEX IF NOT EXISTS idx_share_items_share ON share_items(share_id);
 CREATE INDEX IF NOT EXISTS idx_share_items_image ON share_items(image_id);
 `)
 
+/* favorites schema */
+db.exec(`
+CREATE TABLE IF NOT EXISTS favorites (
+  user_id  INTEGER NOT NULL,
+  image_id INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, image_id),
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY(image_id) REFERENCES images(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_fav_user ON favorites(user_id);
+CREATE INDEX IF NOT EXISTS idx_fav_image ON favorites(image_id);
+`)
+
 /* ---------- tiny migrations for old DBs ---------- */
 function getCols(table) {
   return db.prepare(`PRAGMA table_info(${table})`).all().map(r => r.name)
@@ -794,6 +808,17 @@ const listSharesWithUsers = db.prepare(`
   FROM shares s JOIN users u ON u.id = s.user_id
   ORDER BY s.created_at DESC
 `)
+const insertFavorite = db.prepare(`INSERT OR IGNORE INTO favorites(user_id, image_id, created_at) VALUES(?,?,?)`)
+const deleteFavorite = db.prepare(`DELETE FROM favorites WHERE user_id = ? AND image_id = ?`)
+const listFavoriteIds = db.prepare(`SELECT image_id FROM favorites WHERE user_id = ? ORDER BY created_at DESC`)
+const listFavoriteItems = db.prepare(`
+  SELECT i.id, i.fname, i.folder, i.mtime, i.size, i.kind, i.duration
+  FROM favorites f JOIN images i ON i.id = f.image_id
+  WHERE f.user_id = ?
+  ORDER BY i.mtime DESC, i.id DESC
+  LIMIT ? OFFSET ?
+`)
+const countFavorites = db.prepare(`SELECT COUNT(1) as c FROM favorites WHERE user_id = ?`)
 
 /* admin bootstrap */
 function normalizeScopeInput(input) {
@@ -1157,6 +1182,54 @@ app.get('/api/photos', requireAuth, (req, res) => {
     res.json({ items: rows, total })
   } catch (e) {
     console.error('/api/photos error', e)
+    res.status(500).json({ error: e.message })
+  }
+})
+
+/* ---------- favorites endpoints ---------- */
+app.get('/api/favorites', requireAuth, (req, res) => {
+  try {
+    const rows = listFavoriteIds.all(req.user.id)
+    res.json({ items: rows.map(r => r.image_id) })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.post('/api/favorites/:id', requireAuth, (req, res) => {
+  try {
+    const id = Number(req.params.id)
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
+    const row = db.prepare('SELECT id, folder FROM images WHERE id = ?').get(id)
+    if (!row) return res.status(404).json({ error: 'not found' })
+    if (!inScope(req.user.root_path || '', row.folder)) return res.status(403).json({ error: 'forbidden' })
+    insertFavorite.run(req.user.id, id, nowMs())
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.delete('/api/favorites/:id', requireAuth, (req, res) => {
+  try {
+    const id = Number(req.params.id)
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
+    deleteFavorite.run(req.user.id, id)
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.get('/api/favorites/photos', requireAuth, (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page || '1', 10))
+    const pageSize = Math.max(1, Math.min(500, parseInt(req.query.pageSize || '200', 10)))
+    const offset = (page - 1) * pageSize
+    const items = listFavoriteItems.all(req.user.id, pageSize, offset)
+    const total = countFavorites.get(req.user.id).c
+    res.json({ items, total })
+  } catch (e) {
     res.status(500).json({ error: e.message })
   }
 })
