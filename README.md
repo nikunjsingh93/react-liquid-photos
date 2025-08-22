@@ -117,42 +117,33 @@ Install these on the host (for Docker images, they are included):
 ## Development (local)
 
 Prerequisites:
-- Node.js 18+
-- pnpm or npm
-- The system dependencies listed above
+- Docker
 
-1. Install dependencies:
+1. Local Docker run from your folder root:
    ```bash
-   npm install
+docker build -t liquid-photos:latest .
+
+docker stop liquid-photos || true
+docker rm liquid-photos
+
+docker run -d \
+  --name liquid-photos \
+  --restart unless-stopped \
+  -p 6363:6363 \
+  -e HOST=0.0.0.0 \
+  -e PORT=6363 \
+  -e ADMIN_USER=admin \
+  -e ADMIN_PASS=admin123 \
+  -v "/Users/m4air/Pictures":/pictures:ro \ # <- Change it your  local pictures folder
+  -v "/Users/m4air/liquid-photos-cache":/app/.cache \   # <- Change it your local cache folder
+  liquid-photos:latest
+
    ```
 
-2. Set up environment variables (create a `.env` or export in your shell):
-   ```bash
-   # Required: Path to your photos directory
-   PHOTOS_PATH=/absolute/path/to/your/Pictures
+2. Open `http://localhost:6363`
 
-   # Optional: Server configuration
-   HOST=0.0.0.0
-   PORT=6363
+## Deploy to Server using Docker
 
-   # Optional: live file watching (0/1); if enabled, changes are auto-indexed
-   WATCH_ENABLED=1
-
-   # Optional: initial admin (created only if no admin exists yet)
-   ADMIN_USER=admin
-   ADMIN_PASS=admin123
-   ```
-
-3. Start the development servers (API + Vite):
-   ```bash
-   npm run dev
-   ```
-
-4. Open `http://localhost:5173`
-
-## Docker
-
-The server expects your library to be mounted at `/pictures` inside the container (default if `PHOTOS_PATH` is not set). Cache and generated assets live in `/app/.cache`.
 
 ### Docker Compose
 
