@@ -31,6 +31,21 @@ A fast, modern photo and video gallery application built with React and Node.js.
   - Default admin from env (`ADMIN_USER`) cannot be deleted; other admins can
   - Optional per-user library scope via `root_path`
 
+ 
+## Screenshots
+
+### Desktop
+<img width="1470" height="864" alt="Screenshot 2025-08-22 at 2 28 57 PM" src="https://github.com/user-attachments/assets/850a6c8b-2460-4e22-b02e-d83f69b21bac" />
+
+<img width="1470" height="865" alt="Screenshot 2025-08-22 at 2 32 13 PM" src="https://github.com/user-attachments/assets/9a0b72bd-e542-443c-8e93-84946ae2bf2f" />
+
+### Mobile
+
+<img width="378" height="672" alt="Screenshot 2025-08-22 at 2 33 15 PM" src="https://github.com/user-attachments/assets/c10b92a0-807e-42fe-bede-4ce813b8cbbb" />
+
+<img width="378" height="673" alt="Screenshot 2025-08-22 at 2 33 45 PM" src="https://github.com/user-attachments/assets/91b8f2bd-3b66-4f44-966c-67ff2b66fce5" />
+
+
 ## Touch Interactions
 
 Liquid Photos provides intuitive touch gestures for mobile devices, making it easy to navigate and interact with your media library.
