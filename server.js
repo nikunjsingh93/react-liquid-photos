@@ -150,6 +150,19 @@ CREATE INDEX IF NOT EXISTS idx_shares_user ON shares(user_id);
 CREATE INDEX IF NOT EXISTS idx_shares_token ON shares(token);
 `)
 
+/* share selected items schema */
+db.exec(`
+CREATE TABLE IF NOT EXISTS share_items (
+  share_id  INTEGER NOT NULL,
+  image_id  INTEGER NOT NULL,
+  PRIMARY KEY (share_id, image_id),
+  FOREIGN KEY(share_id) REFERENCES shares(id) ON DELETE CASCADE,
+  FOREIGN KEY(image_id) REFERENCES images(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_share_items_share ON share_items(share_id);
+CREATE INDEX IF NOT EXISTS idx_share_items_image ON share_items(image_id);
+`)
+
 /* ---------- tiny migrations for old DBs ---------- */
 function getCols(table) {
   return db.prepare(`PRAGMA table_info(${table})`).all().map(r => r.name)
@@ -770,6 +783,8 @@ const getUserByUsername = db.prepare(`SELECT * FROM users WHERE username = ?`)
 const insertUser = db.prepare(`INSERT INTO users(username, pass_hash, is_admin, root_path, created_at) VALUES(?,?,?,?,?)`)
 const anyAdmin = db.prepare(`SELECT id FROM users WHERE is_admin = 1 LIMIT 1`)
 const insertShare = db.prepare(`INSERT INTO shares(token, user_id, folder, name, created_at) VALUES(?,?,?,?,?)`)
+const insertShareItem = db.prepare(`INSERT OR IGNORE INTO share_items(share_id, image_id) VALUES(?, ?)`)
+const countShareItems = db.prepare(`SELECT COUNT(1) AS c FROM share_items WHERE share_id = ?`)
 const deleteShareStmt = db.prepare(`DELETE FROM shares WHERE id = ?`)
 const getShareById = db.prepare(`SELECT id, token, user_id, folder, name, created_at FROM shares WHERE id = ?`)
 const getShareByToken = db.prepare(`SELECT id, token, user_id, folder, name, created_at FROM shares WHERE token = ?`)
@@ -1160,7 +1175,19 @@ app.post('/api/shares', requireAuth, (req, res) => {
 
     const token = crypto.randomBytes(20).toString('hex')
     const name = String(req.body?.name || path.basename(folder) || 'Shared').trim()
-    insertShare.run(token, req.user.id, folder, name, nowMs())
+    const info = insertShare.run(token, req.user.id, folder, name, nowMs())
+    const shareId = info.lastInsertRowid
+
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(x => parseInt(x, 10)).filter(Number.isFinite) : []
+    if (ids.length > 0) {
+      // Only allow ids within the folder scope
+      const rows = db.prepare(`SELECT id FROM images WHERE id IN (${ids.map(()=>'?').join(',')}) AND folder >= ? AND folder < ?`).all(...ids, lower, upper)
+      const allowed = new Set(rows.map(r => r.id))
+      for (const id of ids) {
+        if (allowed.has(id)) insertShareItem.run(shareId, id)
+      }
+    }
+
     const urlPath = `/s/${token}`
     res.json({ ok: true, token, name, folder, urlPath })
   } catch (e) {
@@ -1215,8 +1242,14 @@ app.get('/s/:token/info', (req, res) => {
     const share = getShare(req, res); if (!share) return
     const lower = share.folder
     const upper = lower + '\uFFFF'
-    const total = db.prepare('SELECT COUNT(1) as c FROM images WHERE folder >= ? AND folder < ?').get(lower, upper).c
-    res.json({ token: share.token, name: share.name, folder: share.folder, created_at: share.created_at, total })
+    const selectedCount = countShareItems.get(share.id).c
+    let total
+    if (selectedCount > 0) {
+      total = selectedCount
+    } else {
+      total = db.prepare('SELECT COUNT(1) as c FROM images WHERE folder >= ? AND folder < ?').get(lower, upper).c
+    }
+    res.json({ token: share.token, name: share.name, folder: share.folder, created_at: share.created_at, total, selected: selectedCount > 0 })
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
@@ -1236,16 +1269,31 @@ app.get('/s/:token/photos', (req, res) => {
 
     const lower = share.folder
     const upper = lower + '\uFFFF'
-    const rows = db.prepare(`
-      SELECT id, fname, folder, mtime, size, kind, duration
-      FROM images
-      WHERE folder >= ? AND folder < ?${kindWhere}
-      ORDER BY mtime DESC, id DESC
-      LIMIT ? OFFSET ?
-    `).all(lower, upper, pageSize, offset)
-    const total = db.prepare(`
-      SELECT COUNT(1) as c FROM images WHERE folder >= ? AND folder < ?${kindWhere}
-    `).get(lower, upper).c
+    const selectedCount = countShareItems.get(share.id).c
+    let rows, total
+    if (selectedCount > 0) {
+      // Selected-only share
+      rows = db.prepare(`
+        SELECT i.id, i.fname, i.folder, i.mtime, i.size, i.kind, i.duration
+        FROM images i
+        JOIN share_items si ON si.image_id = i.id
+        WHERE si.share_id = ?${kindWhere}
+        ORDER BY i.mtime DESC, i.id DESC
+        LIMIT ? OFFSET ?
+      `).all(share.id, pageSize, offset)
+      total = selectedCount
+    } else {
+      rows = db.prepare(`
+        SELECT id, fname, folder, mtime, size, kind, duration
+        FROM images
+        WHERE folder >= ? AND folder < ?${kindWhere}
+        ORDER BY mtime DESC, id DESC
+        LIMIT ? OFFSET ?
+      `).all(lower, upper, pageSize, offset)
+      total = db.prepare(`
+        SELECT COUNT(1) as c FROM images WHERE folder >= ? AND folder < ?${kindWhere}
+      `).get(lower, upper).c
+    }
     res.json({ items: rows, total })
   } catch (e) {
     res.status(500).json({ error: e.message })
@@ -1257,7 +1305,13 @@ function assertShareOwnsId(share, id) {
   if (!row) return null
   const lower = share.folder
   const upper = lower + '\uFFFF'
-  if (!(row.folder >= lower && row.folder < upper)) return null
+  const selectedCount = countShareItems.get(share.id).c
+  if (selectedCount > 0) {
+    const owns = db.prepare('SELECT 1 AS ok FROM share_items WHERE share_id = ? AND image_id = ?').get(share.id, row.id)
+    if (!owns) return null
+  } else {
+    if (!(row.folder >= lower && row.folder < upper)) return null
+  }
   return row
 }
 

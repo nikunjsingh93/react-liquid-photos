@@ -59,8 +59,8 @@ const API = {
     (await fetch(apiUrl('/api/index/status'), { credentials: 'include' })).json(),
   /* shares (auth) */
   sharesList: async (all = false) => (await fetch(apiUrl(`/api/shares${all ? '?all=1' : ''}`), { credentials: 'include' })).json(),
-  shareCreate: async (folder, name) => (await fetch(apiUrl('/api/shares'), {
-    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folder, name })
+  shareCreate: async (folder, name, ids = []) => (await fetch(apiUrl('/api/shares'), {
+    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folder, name, ids })
   })).json(),
   shareDelete: async (id) => (await fetch(apiUrl(`/api/shares/${id}`), { method: 'DELETE', credentials: 'include' })).json(),
   /* public shares */
@@ -1214,7 +1214,9 @@ export default function App() {
                     <span className="text-xs hidden sm:block">Select</span>
                   </button>
                   {isShareMode && shareInfo?.name && (
-                    <div className="max-w-[40vw] truncate text-xs text-slate-200" title={shareInfo.name}>{shareInfo.name}</div>
+                    <div className="max-w-[40vw] truncate text-xs text-slate-200" title={shareInfo.name}>
+                      {shareInfo.name}{shareInfo.selected ? ' (selected)' : ''}
+                    </div>
                   )}
                 </div>
 
@@ -1325,6 +1327,26 @@ export default function App() {
                               }}
                             >
                               Share "{(String(selected).split('/').filter(Boolean).slice(-1)[0] || 'Folder')}" Folder
+                            </button>
+                          )}
+                          {(treeMode === 'folders' && selected && !String(selected).startsWith('date:') && selectedIds.size > 0) && (
+                            <button
+                              className="w-full text-left inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15 mb-2"
+                              onClick={async () => {
+                                try {
+                                  const folderName = (String(selected).split('/').filter(Boolean).slice(-1)[0] || 'Folder')
+                                  const ids = Array.from(selectedIds)
+                                  const r = await API.shareCreate(selected, `${folderName}`, ids)
+                                  if (!r?.token) throw new Error(r?.error || 'Share failed')
+                                  const full = `${window.location.origin}${r.urlPath}`
+                                  try { await navigator.clipboard.writeText(full); showToast('Link copied to clipboard') } catch { showToast('Copy failed; please copy from modal') }
+                                  setShareOpen(false)
+                                } catch (e) {
+                                  alert(e?.message || 'Failed to create share')
+                                }
+                              }}
+                            >
+                              Share Selected from "{(String(selected).split('/').filter(Boolean).slice(-1)[0] || 'Folder')}"
                             </button>
                           )}
                           <button
