@@ -1419,7 +1419,7 @@ export default function App() {
                                   if (copied) {
                                     showToast('Link copied to clipboard')
                                   } else {
-                                    showToast('Cant Copy on iOS, Please copy from All Shares')
+                                    showToast('Please copy Share Link from All Shares')
                                   }
                                   setShareOpen(false)
                                   setSelectMode(false)
@@ -1447,7 +1447,7 @@ export default function App() {
                                   if (copied) {
                                     showToast('Link copied to clipboard')
                                   } else {
-                                    showToast('Cant Copy on iOS, Please copy from All Shares')
+                                    showToast('Please copy Share Link from All Shares')
                                   }
                                   setShareOpen(false)
                                   setSelectMode(false)
@@ -1476,7 +1476,7 @@ export default function App() {
                                   if (copied) {
                                     showToast('Link copied to clipboard')
                                   } else {
-                                    showToast('Cant Copy on iOS, Please copy from All Shares')
+                                    showToast('Please copy Share Link from All Shares')
                                   }
                                   setShareOpen(false)
                                   setSelectMode(false)
