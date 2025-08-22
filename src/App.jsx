@@ -2106,6 +2106,59 @@ function Viewer({
     </div>
   )}
 
+/* ----- Info Panel ----- */
+function InfoPanel({ meta, fallback }) {
+  const d = meta || fallback || {}
+  const isVideo = String(d.kind) === 'video'
+  const rows = [
+    { k: 'Name', v: d.fname },
+    { k: 'Folder', v: d.folder },
+    { k: 'Type', v: isVideo ? 'Video' : 'Image' },
+    { k: isVideo ? 'Duration' : 'Size', v: isVideo ? formatDuration(d.duration) : formatBytes(d.size) },
+    { k: 'Dimensions', v: (d.width && d.height) ? `${d.width} × ${d.height}` : '' },
+  ]
+  const exif = d.exif || {}
+  function formatTakenDate(value) {
+    if (!value) return ''
+    try {
+      const dt = value instanceof Date ? value : new Date(value)
+      if (isNaN(dt.getTime())) return ''
+      const day = dt.getDate()
+      const month = dt.toLocaleString('en-US', { month: 'long' })
+      const year = dt.getFullYear()
+      return `${day} ${month}, ${year}`
+    } catch { return '' }
+  }
+  const takenRaw = exif.DateTimeOriginal || exif.CreateDate || exif.ModifyDate || ''
+  const takenFormatted = formatTakenDate(takenRaw)
+  const exifRows = [
+    { k: 'Camera', v: [exif.Make, exif.Model].filter(Boolean).join(' ') },
+    { k: 'Lens', v: exif.LensModel || exif.Lens || '' },
+    { k: 'ISO', v: exif.ISO },
+    { k: 'Exposure', v: exif.ExposureTime ? `${exif.ExposureTime}s` : '' },
+    { k: 'Aperture', v: exif.FNumber ? `f/${exif.FNumber}` : '' },
+    { k: 'Focal length', v: exif.FocalLength ? `${exif.FocalLength}mm` : '' },
+    { k: 'Taken', v: takenFormatted },
+  ]
+  const all = rows.concat(isVideo ? [] : exifRows)
+  return (
+    <div className="text-sm space-y-3">
+      <div className="font-semibold text-slate-100">Details</div>
+      <div className="space-y-1">
+        {all.filter(r => r.v).map((r, idx) => (
+          <div key={idx} className="flex items-start gap-2">
+            <div className="w-28 shrink-0 text-slate-400">{r.k}</div>
+            <div className="text-slate-100 break-all">{String(r.v)}</div>
+          </div>
+        ))}
+        {!meta && (
+          <div className="text-xs text-slate-400">Loading detailed metadata…</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /* ----- HLS-capable Video Player ----- */
 function VideoPlayer({ srcOriginal, srcHls, srcReduced, mode, style, poster, onLoad, onError }) {
   const videoRef = useRef(null)
