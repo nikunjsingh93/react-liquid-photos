@@ -14,6 +14,10 @@ A fast, modern photo and video gallery application built with React and Node.js.
 - **Touch Gestures**: Intuitive swipe controls for mobile devices
 - **Loading States**: Smooth loading indicators for thumbnails and navigation
 - **Multi-Select**: Select multiple photos for batch download
+- **Sharing Links**: Generate shareable links for photos and videos folders
+  - Click the share button in the full-screen viewer to generate a direct link
+  - Share links provide direct access to media without requiring authentication
+  - Perfect for sharing photos with friends and family
 - **Admin Tools**:
   - "Scan Media" menu with **Full Rescan** and **Scan Path** (admin-only)
   - Create users with an **Admin** toggle
