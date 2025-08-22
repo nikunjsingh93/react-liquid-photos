@@ -100,13 +100,13 @@ function SidebarTreeContent({ tree, open, toggle, select, selected, mode = 'fold
           <span className="text-sm font-medium">{mode === 'dates' ? 'Dates' : 'Folders'}</span>
           <div className="ml-auto flex items-center gap-1">
             <button
-              className={`text-xs px-2 py-0.5 rounded ${mode === 'folders' ? 'bg-white/20' : 'bg-white/10'} border border-white/10`}
+              className={`text-xs px-2 py-0.5 rounded-full ${mode === 'folders' ? 'bg-white/20' : 'bg-white/10'} border border-white/10 hover:bg-white/20`}
               onClick={() => onToggleMode && onToggleMode('folders')}
               title="Browse by folders"
               disabled={loading}
             >Folders</button>
             <button
-              className={`text-xs px-2 py-0.5 rounded ${mode === 'dates' ? 'bg-white/20' : 'bg-white/10'} border border-white/10`}
+              className={`text-xs px-2 py-0.5 rounded-full ${mode === 'dates' ? 'bg-white/20' : 'bg-white/10'} border border-white/10 hover:bg-white/20`}
               onClick={() => onToggleMode && onToggleMode('dates')}
               title="Browse by dates"
               disabled={loading}
@@ -136,7 +136,7 @@ function SidebarFooter({ onSignOut, user, onGoAdmin }) {
     <div className="shrink-0 border-t border-white/10 p-2 flex items-center gap-2 bg-zinc-950">
       {user?.is_admin && (
         <button
-          className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+          className="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
           onClick={onGoAdmin}
           title="Admin panel"
         >
@@ -144,7 +144,7 @@ function SidebarFooter({ onSignOut, user, onGoAdmin }) {
         </button>
       )}
       <button
-        className="ml-auto inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
+        className="ml-auto inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
         onClick={onSignOut}
         title="Sign out"
       >
@@ -1503,7 +1503,7 @@ export default function App() {
                     )}
                   </div>
 
-                  <div className="hidden sm:block text-xs text-slate-300 shrink-0 px-2 py-1 rounded bg-white/5 border border-white/10">
+                  <div className="hidden sm:block text-xs text-slate-300 shrink-0 px-2 py-1 rounded-full bg-white/10 border border-white/10">
                     {loading ? (
                       <div className="flex items-center gap-2">
                         <div className="w-3 h-3 border border-slate-400 border-t-transparent rounded-full animate-spin"></div>
