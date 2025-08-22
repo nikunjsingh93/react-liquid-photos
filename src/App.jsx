@@ -1287,8 +1287,8 @@ export default function App() {
                 
                 {/* Right side controls */}
                 <div className="ml-auto flex items-center gap-2">
-                  {/* Share button (always shown; dropdown adapts to selection) */}
-                  {!isShareMode && (
+                  {/* Share button (hidden in Dates view) */}
+                  {!isShareMode && treeMode !== 'dates' && (
                     <div ref={shareRef} className="relative">
                       <button
                         className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white/10 border border-white/10 hover:bg-white/15"
@@ -1772,7 +1772,7 @@ export default function App() {
               {shares.map(s => (
                 <div key={s.id} className="rounded border border-white/10 p-2 flex items-center gap-2">
                   <div className="min-w-0">
-                    <div className="text-sm text-slate-100 truncate">{s.name}</div>
+                    <div className="text-sm text-slate-100 truncate">{s.name}{s.selected ? ' (selected)' : ''}</div>
                     <div className="text-xs text-slate-400 truncate">{s.folder}</div>
                     <div className="text-[10px] text-slate-500">{new Date(s.created_at).toLocaleString()}</div>
                   </div>

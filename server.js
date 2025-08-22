@@ -1201,11 +1201,11 @@ app.get('/api/shares', requireAuth, (req, res) => {
     if (includeAll) {
       if (!req.user?.is_admin) return res.status(403).json({ error: 'admin only' })
       const rows = listSharesWithUsers.all()
-      const items = rows.map(r => ({ ...r, urlPath: `/s/${r.token}` }))
+      const items = rows.map(r => ({ ...r, urlPath: `/s/${r.token}`, selected: countShareItems.get(r.id).c > 0 }))
       return res.json({ items })
     } else {
       const rows = listSharesByUser.all(req.user.id)
-      const items = rows.map(r => ({ ...r, urlPath: `/s/${r.token}` }))
+      const items = rows.map(r => ({ ...r, urlPath: `/s/${r.token}`, selected: countShareItems.get(r.id).c > 0 }))
       return res.json({ items })
     }
   } catch (e) {
