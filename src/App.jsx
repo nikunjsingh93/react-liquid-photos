@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import Hls from 'hls.js'
 import {
   FolderTree, RefreshCcw, Image as ImageIcon, ChevronRight, ChevronDown, X,
-  Maximize2, Download, Menu, Plus, Minus, Info, CheckSquare, LogOut, Shield, Trash2, Play, Monitor, Share, Heart
+  Maximize2, Download, Menu, Plus, Minus, Info, CheckSquare, LogOut, Shield, Trash2, Play, Monitor, Share, Heart, HardDrive
 } from 'lucide-react'
 
 /* Same-origin base (Vite proxy handles /api, /thumb, /view, /media, /download) */
@@ -47,6 +47,7 @@ const API = {
     const r = await fetch(apiUrl(`/api/photos?${qs}`), { credentials: 'include', ...options })
     return await r.json()
   },
+  storage: async () => (await fetch(apiUrl('/api/storage'), { credentials: 'include' })).json(),
   meta: async (id, options = {}) =>
     (await fetch(apiUrl(`/api/meta/${id}`), { credentials: 'include', ...options })).json(),
   rescan: async () =>
@@ -195,6 +196,15 @@ function SharedSidebar({ tree, open, toggle, selected, mode, loading, onSelect, 
         mode={mode} loading={loading} onToggleMode={onToggleMode} showRoot />
     </aside>
   )
+}
+
+function formatStorage(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return 'Unavailable'
+  if (bytes === 0) return '0 B'
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
+  const value = bytes / 1024 ** index
+  return `${value.toFixed(index === 0 ? 0 : value >= 10 ? 1 : 2)} ${units[index]}`
 }
 
 function TreeNode({ node, depth, open, toggle, select, selected, showRoot = false }) {
@@ -505,6 +515,13 @@ export default function App() {
   const [tileMin, setTileMin] = useState(120)
   const [resizeOpen, setResizeOpen] = useState(false)
   const resizeRef = useRef(null)
+  const [storageOpen, setStorageOpen] = useState(false)
+  const [storage, setStorage] = useState(null)
+  const [storageLoading, setStorageLoading] = useState(false)
+  const [storageError, setStorageError] = useState('')
+  const storageRef = useRef(null)
+  const storageLoadingRef = useRef(false)
+  const storageCloseTimerRef = useRef(null)
   // Share menu/modal
   const [shareOpen, setShareOpen] = useState(false)
   const shareRef = useRef(null)
@@ -663,6 +680,36 @@ export default function App() {
     } catch (e) { setError(e?.message || 'Failed to switch view mode') }
     finally { setTreeLoading(false) }
   }, [treeMode, shareToken, mediaFilter])
+
+  const loadStorage = useCallback(async () => {
+    if (storageLoadingRef.current) return
+    storageLoadingRef.current = true
+    setStorageLoading(true)
+    setStorageError('')
+    try {
+      const result = await API.storage()
+      if (result?.error) throw new Error(result.error)
+      setStorage(result)
+    } catch (e) { setStorageError(e?.message || 'Failed to load storage') }
+    finally { storageLoadingRef.current = false; setStorageLoading(false) }
+  }, [])
+
+  const openStorage = useCallback(() => {
+    clearTimeout(storageCloseTimerRef.current)
+    setStorageOpen(true)
+    if (!storage) loadStorage()
+  }, [storage, loadStorage])
+
+  useEffect(() => {
+    if (!storageOpen) return
+    const onDoc = (e) => { if (!storageRef.current?.contains(e.target)) setStorageOpen(false) }
+    const onKey = (e) => { if (e.key === 'Escape') setStorageOpen(false) }
+    document.addEventListener('pointerdown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('pointerdown', onDoc); document.removeEventListener('keydown', onKey) }
+  }, [storageOpen])
+
+  useEffect(() => () => clearTimeout(storageCloseTimerRef.current), [])
 
   // popover outside click
   useEffect(() => {
@@ -1611,16 +1658,53 @@ export default function App() {
                     )}
                   </div>
 
-                  <div className="hidden sm:block text-xs text-slate-300 shrink-0 px-2 py-1 rounded-full bg-white/10 border border-white/10">
-                    {loading ? (
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 border border-slate-400 border-t-transparent rounded-full animate-spin"></div>
-                        <span>Loading...</span>
-                      </div>
-                    ) : (
-                      `${(showFavorites ? favoritesList.length : total).toLocaleString()} items`
-                    )}
-                  </div>
+                  {isShareMode ? (
+                    <div className="hidden sm:block text-xs text-slate-300 shrink-0 px-2 py-1 rounded-full bg-white/10 border border-white/10">
+                      {loading ? 'Loading...' : `${total.toLocaleString()} items`}
+                    </div>
+                  ) : (
+                    <div ref={storageRef} className="relative shrink-0"
+                      onMouseEnter={() => { if (window.matchMedia('(hover: hover)').matches) openStorage() }}
+                      onMouseLeave={() => { storageCloseTimerRef.current = setTimeout(() => setStorageOpen(false), 200) }}>
+                      <button className="inline-flex items-center gap-1.5 text-xs text-slate-300 px-2 py-1 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
+                        onClick={() => { if (window.matchMedia('(hover: hover)').matches) openStorage(); else if (storageOpen) setStorageOpen(false); else openStorage() }}
+                        aria-label="Show library storage" aria-expanded={storageOpen} aria-haspopup="dialog">
+                        <HardDrive className="w-3.5 h-3.5 sm:hidden" />
+                        <span className="hidden sm:inline">{loading ? 'Loading...' : `${(showFavorites ? favoritesList.length : total).toLocaleString()} items`}</span>
+                      </button>
+                      {storageOpen && (
+                        <div className="fixed z-50 w-72 max-w-[calc(100vw-1rem)] rounded border border-white/10 bg-zinc-950 shadow-xl p-3 text-xs text-slate-200"
+                          style={{ top: storageRef.current ? storageRef.current.getBoundingClientRect().bottom + 8 : 0,
+                            right: storageRef.current ? Math.max(8, window.innerWidth - storageRef.current.getBoundingClientRect().right) : 8 }}
+                          role="dialog" aria-label="Library storage"
+                          onMouseEnter={() => clearTimeout(storageCloseTimerRef.current)}>
+                          <div className="flex items-center justify-between mb-3">
+                            <span className="font-semibold text-sm">Library storage</span>
+                            <button className="text-slate-400 hover:text-white" onClick={loadStorage} disabled={storageLoading}>Refresh</button>
+                          </div>
+                          {storageLoading && !storage && <div className="text-slate-400">Loading storage...</div>}
+                          {storageError && <div className="text-rose-300 mb-2">{storageError}</div>}
+                          {storage && (
+                            <>
+                              <div className="space-y-1">
+                                <div className="flex justify-between gap-3"><span>Photos</span><span>{formatStorage(storage.photoBytes)}</span></div>
+                                <div className="flex justify-between gap-3"><span>Videos</span><span>{formatStorage(storage.videoBytes)}</span></div>
+                                <div className="flex justify-between gap-3 font-medium border-t border-white/10 pt-1"><span>Indexed total</span><span>{formatStorage(storage.photoBytes + storage.videoBytes)}</span></div>
+                              </div>
+                              <div className="border-t border-white/10 mt-3 pt-2 font-medium">Photo drives</div>
+                              {(storage.drives || []).length === 0 ? <div className="text-slate-400 mt-1">No indexed media drives</div> :
+                                storage.drives.map(drive => (
+                                  <div key={drive.label} className="mt-2 flex justify-between gap-3">
+                                    <span className="truncate" title={drive.label}>{drive.label}</span>
+                                    <span className="shrink-0">{formatStorage(drive.availableBytes)} free{Number.isFinite(drive.totalBytes) ? ` / ${formatStorage(drive.totalBytes)}` : ''}</span>
+                                  </div>
+                                ))}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </header>

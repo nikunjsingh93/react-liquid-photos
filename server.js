@@ -1147,6 +1147,51 @@ app.get('/api/tree', requireAuth, (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+function photoMountPaths() {
+  const root = path.resolve(PHOTOS_ROOT)
+  const mounts = new Set([root])
+  if (process.platform === 'linux') {
+    try {
+      const mountInfo = fs.readFileSync('/proc/self/mountinfo', 'utf8')
+      for (const line of mountInfo.split('\n')) {
+        const mountPath = line.split(' - ')[0]?.split(' ')[4]?.replace(/\\([0-7]{3})/g, (_, code) => String.fromCharCode(parseInt(code, 8)))
+        if (mountPath && (mountPath === root || mountPath.startsWith(`${root}/`))) mounts.add(mountPath)
+      }
+    } catch {}
+  }
+  return [...mounts].sort((a, b) => b.length - a.length)
+}
+
+app.get('/api/storage', requireAuth, async (req, res) => {
+  try {
+    const scope = req.user.root_path || ''
+    const where = scope ? 'WHERE folder = ? OR (folder >= ? AND folder < ?)' : ''
+    const args = scope ? [scope, `${scope}/`, `${scope}/\uFFFF`] : []
+    const totals = db.prepare(`SELECT
+      COALESCE(SUM(CASE WHEN kind = 'image' THEN size ELSE 0 END), 0) AS photoBytes,
+      COALESCE(SUM(CASE WHEN kind = 'video' THEN size ELSE 0 END), 0) AS videoBytes
+      FROM images ${where}`).get(...args)
+
+    const mounts = photoMountPaths()
+    const used = new Set()
+    const folders = db.prepare(`SELECT DISTINCT folder FROM images ${where}`).all(...args)
+    for (const { folder } of folders) {
+      const absolute = path.resolve(PHOTOS_ROOT, folder)
+      const mount = mounts.find(p => absolute === p || absolute.startsWith(`${p}${path.sep}`))
+      if (mount) used.add(mount)
+    }
+    const drives = await Promise.all([...used].map(async (mount) => {
+      const relative = path.relative(PHOTOS_ROOT, mount)
+      const label = relative ? relative.split(path.sep).join('/') : (path.basename(PHOTOS_ROOT) || 'Photos')
+      try {
+        const stats = await fsp.statfs(mount)
+        return { label, totalBytes: stats.blocks * stats.bsize, availableBytes: stats.bavail * stats.bsize }
+      } catch { return { label, totalBytes: null, availableBytes: null } }
+    }))
+    res.json({ photoBytes: totals.photoBytes, videoBytes: totals.videoBytes, drives: drives.sort((a, b) => a.label.localeCompare(b.label)) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 app.get('/api/photos', requireAuth, (req, res) => {
   const userScope = req.user.root_path || ''
   const folderRel = (req.query.folder || '').toString()
