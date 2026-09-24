@@ -47,7 +47,10 @@ const API = {
     const r = await fetch(apiUrl(`/api/photos?${qs}`), { credentials: 'include', ...options })
     return await r.json()
   },
-  storage: async () => (await fetch(apiUrl('/api/storage'), { credentials: 'include' })).json(),
+  storage: async (params = {}) => {
+    const qs = new URLSearchParams(params).toString()
+    return (await fetch(apiUrl(`/api/storage${qs ? `?${qs}` : ''}`), { credentials: 'include' })).json()
+  },
   meta: async (id, options = {}) =>
     (await fetch(apiUrl(`/api/meta/${id}`), { credentials: 'include', ...options })).json(),
   rescan: async () =>
@@ -520,8 +523,26 @@ export default function App() {
   const [storageLoading, setStorageLoading] = useState(false)
   const [storageError, setStorageError] = useState('')
   const storageRef = useRef(null)
-  const storageLoadingRef = useRef(false)
+  const storageRequestRef = useRef(0)
   const storageCloseTimerRef = useRef(null)
+  const storageParams = useMemo(() => {
+    if (showFavorites) return {}
+    if (treeMode === 'folders' && selected) return { mode: 'folders', folder: selected }
+    if (treeMode === 'dates' && dateRange.from && dateRange.to) return { mode: 'dates', from: dateRange.from, to: dateRange.to }
+    return {}
+  }, [showFavorites, treeMode, selected, dateRange.from, dateRange.to])
+  const storageSelectionKey = JSON.stringify(storageParams)
+  const storageSelectionLabel = useMemo(() => {
+    if (storageParams.mode === 'folders') return selected.split('/').filter(Boolean).at(-1) || selected
+    if (storageParams.mode === 'dates') {
+      const date = new Date(dateRange.from)
+      const value = selected.slice(5)
+      if (value.startsWith('Y-')) return date.toLocaleDateString('en-US', { year: 'numeric', timeZone: 'UTC' })
+      if (value.startsWith('M-')) return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+      return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
+    }
+    return ''
+  }, [storageParams.mode, selected, dateRange.from])
   // Share menu/modal
   const [shareOpen, setShareOpen] = useState(false)
   const shareRef = useRef(null)
@@ -682,23 +703,23 @@ export default function App() {
   }, [treeMode, shareToken, mediaFilter])
 
   const loadStorage = useCallback(async () => {
-    if (storageLoadingRef.current) return
-    storageLoadingRef.current = true
+    const requestId = ++storageRequestRef.current
     setStorageLoading(true)
     setStorageError('')
     try {
-      const result = await API.storage()
+      const result = await API.storage(storageParams)
       if (result?.error) throw new Error(result.error)
-      setStorage(result)
-    } catch (e) { setStorageError(e?.message || 'Failed to load storage') }
-    finally { storageLoadingRef.current = false; setStorageLoading(false) }
-  }, [])
+      if (requestId === storageRequestRef.current) setStorage({ ...result, selectionKey: storageSelectionKey })
+    } catch (e) { if (requestId === storageRequestRef.current) setStorageError(e?.message || 'Failed to load storage') }
+    finally { if (requestId === storageRequestRef.current) setStorageLoading(false) }
+  }, [storageParams, storageSelectionKey])
 
   const openStorage = useCallback(() => {
     clearTimeout(storageCloseTimerRef.current)
     setStorageOpen(true)
-    if (!storage) loadStorage()
-  }, [storage, loadStorage])
+  }, [])
+
+  useEffect(() => { if (storageOpen) loadStorage() }, [storageOpen, loadStorage])
 
   useEffect(() => {
     if (!storageOpen) return
@@ -1676,16 +1697,30 @@ export default function App() {
                         <div className="fixed z-50 w-72 max-w-[calc(100vw-1rem)] rounded border border-white/10 bg-zinc-950 shadow-xl p-3 text-xs text-slate-200"
                           style={{ top: storageRef.current ? storageRef.current.getBoundingClientRect().bottom + 8 : 0,
                             right: storageRef.current ? Math.max(8, window.innerWidth - storageRef.current.getBoundingClientRect().right) : 8 }}
-                          role="dialog" aria-label="Library storage"
+                          role="dialog" aria-label="Storage details"
                           onMouseEnter={() => clearTimeout(storageCloseTimerRef.current)}>
                           <div className="flex items-center justify-between mb-3">
-                            <span className="font-semibold text-sm">Library storage</span>
+                            <span className="font-semibold text-sm">Storage</span>
                             <button className="text-slate-400 hover:text-white" onClick={loadStorage} disabled={storageLoading}>Refresh</button>
                           </div>
                           {storageLoading && !storage && <div className="text-slate-400">Loading storage...</div>}
                           {storageError && <div className="text-rose-300 mb-2">{storageError}</div>}
+                          {storageParams.mode && (
+                            <div className="border-b border-white/10 pb-3 mb-3">
+                              <div className="font-medium">Current {storageParams.mode === 'dates' ? 'date' : 'folder'}</div>
+                              <div className="text-slate-400 truncate mb-2" title={storageSelectionLabel}>{storageSelectionLabel}</div>
+                              {storage?.selectionKey === storageSelectionKey && storage.selection ? (
+                                <div className="space-y-1">
+                                  <div className="flex justify-between gap-3"><span>Photos ({storage.selection.photoCount.toLocaleString()})</span><span>{formatStorage(storage.selection.photoBytes)}</span></div>
+                                  <div className="flex justify-between gap-3"><span>Videos ({storage.selection.videoCount.toLocaleString()})</span><span>{formatStorage(storage.selection.videoBytes)}</span></div>
+                                  <div className="flex justify-between gap-3 font-medium border-t border-white/10 pt-1"><span>Total ({(storage.selection.photoCount + storage.selection.videoCount).toLocaleString()})</span><span>{formatStorage(storage.selection.photoBytes + storage.selection.videoBytes)}</span></div>
+                                </div>
+                              ) : storageLoading ? <div className="text-slate-400">Loading selection...</div> : null}
+                            </div>
+                          )}
                           {storage && (
                             <>
+                              <div className="font-medium mb-2">Library</div>
                               <div className="space-y-1">
                                 <div className="flex justify-between gap-3"><span>Photos</span><span>{formatStorage(storage.photoBytes)}</span></div>
                                 <div className="flex justify-between gap-3"><span>Videos</span><span>{formatStorage(storage.videoBytes)}</span></div>

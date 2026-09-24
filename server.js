@@ -1165,12 +1165,40 @@ function photoMountPaths() {
 app.get('/api/storage', requireAuth, async (req, res) => {
   try {
     const scope = req.user.root_path || ''
-    const where = scope ? 'WHERE folder = ? OR (folder >= ? AND folder < ?)' : ''
+    const scopeCondition = 'folder = ? OR (folder >= ? AND folder < ?)'
+    const where = scope ? `WHERE ${scopeCondition}` : ''
     const args = scope ? [scope, `${scope}/`, `${scope}/\uFFFF`] : []
     const totals = db.prepare(`SELECT
       COALESCE(SUM(CASE WHEN kind = 'image' THEN size ELSE 0 END), 0) AS photoBytes,
       COALESCE(SUM(CASE WHEN kind = 'video' THEN size ELSE 0 END), 0) AS videoBytes
       FROM images ${where}`).get(...args)
+
+    let selection = null
+    const mode = String(req.query.mode || '')
+    if (mode === 'folders' && req.query.folder) {
+      const relative = String(req.query.folder)
+      if (relative.startsWith('/') || relative.includes('\\') || relative.split('/').some(part => part === '.' || part === '..')) {
+        return res.status(400).json({ error: 'invalid folder' })
+      }
+      const folder = scopeJoin(scope, relative)
+      selection = db.prepare(`SELECT
+        COALESCE(SUM(CASE WHEN kind = 'image' THEN 1 ELSE 0 END), 0) AS photoCount,
+        COALESCE(SUM(CASE WHEN kind = 'video' THEN 1 ELSE 0 END), 0) AS videoCount,
+        COALESCE(SUM(CASE WHEN kind = 'image' THEN size ELSE 0 END), 0) AS photoBytes,
+        COALESCE(SUM(CASE WHEN kind = 'video' THEN size ELSE 0 END), 0) AS videoBytes
+        FROM images WHERE folder = ? OR (folder >= ? AND folder < ?)`)
+        .get(folder, `${folder}/`, `${folder}/\uFFFF`)
+    } else if (mode === 'dates' && req.query.from !== undefined && req.query.to !== undefined) {
+      const from = Number(req.query.from), to = Number(req.query.to)
+      if (!Number.isFinite(from) || !Number.isFinite(to) || from < 0 || to <= from) return res.status(400).json({ error: 'invalid date range' })
+      const dateWhere = scope ? `(${scopeCondition}) AND mtime >= ? AND mtime < ?` : 'mtime >= ? AND mtime < ?'
+      selection = db.prepare(`SELECT
+        COALESCE(SUM(CASE WHEN kind = 'image' THEN 1 ELSE 0 END), 0) AS photoCount,
+        COALESCE(SUM(CASE WHEN kind = 'video' THEN 1 ELSE 0 END), 0) AS videoCount,
+        COALESCE(SUM(CASE WHEN kind = 'image' THEN size ELSE 0 END), 0) AS photoBytes,
+        COALESCE(SUM(CASE WHEN kind = 'video' THEN size ELSE 0 END), 0) AS videoBytes
+        FROM images WHERE ${dateWhere}`).get(...args, from, to)
+    }
 
     const mounts = photoMountPaths()
     const used = new Set()
@@ -1188,7 +1216,7 @@ app.get('/api/storage', requireAuth, async (req, res) => {
         return { label, totalBytes: stats.blocks * stats.bsize, availableBytes: stats.bavail * stats.bsize }
       } catch { return { label, totalBytes: null, availableBytes: null } }
     }))
-    res.json({ photoBytes: totals.photoBytes, videoBytes: totals.videoBytes, drives: drives.sort((a, b) => a.label.localeCompare(b.label)) })
+    res.json({ photoBytes: totals.photoBytes, videoBytes: totals.videoBytes, selection, drives: drives.sort((a, b) => a.label.localeCompare(b.label)) })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
