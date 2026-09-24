@@ -65,6 +65,8 @@ const API = {
   shareDelete: async (id) => (await fetch(apiUrl(`/api/shares/${id}`), { method: 'DELETE', credentials: 'include' })).json(),
   /* public shares */
   shareInfo: async (token) => (await fetch(apiUrl(`/s/${token}/info`))).json(),
+  shareTree: async (token, mode = 'folders', filter = 'all') =>
+    (await fetch(apiUrl(`/s/${token}/tree?mode=${encodeURIComponent(mode)}&filter=${encodeURIComponent(filter)}`))).json(),
   sharePhotos: async (token, params = {}) => {
     const qs = new URLSearchParams(params).toString()
     const r = await fetch(apiUrl(`/s/${token}/photos?${qs}`))
@@ -117,7 +119,7 @@ function isRawName(name) {
 }
 
 /* Scrollable tree ONLY (header label + tree) */
-function SidebarTreeContent({ tree, open, toggle, select, selected, mode = 'folders', onToggleMode, showHeader = true, loading = false }) {
+function SidebarTreeContent({ tree, open, toggle, select, selected, mode = 'folders', onToggleMode, showHeader = true, showRoot = false, loading = false }) {
   if (!tree && !loading) return null
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-2 pr-1" style={{ WebkitOverflowScrolling: 'touch' }}>
@@ -150,7 +152,7 @@ function SidebarTreeContent({ tree, open, toggle, select, selected, mode = 'fold
             </div>
           </div>
         ) : (
-          <TreeNode node={tree} depth={0} open={open} toggle={toggle} select={select} selected={selected} />
+          <TreeNode node={tree} depth={0} open={open} toggle={toggle} select={select} selected={selected} showRoot={showRoot} />
         )}
       </div>
     </div>
@@ -181,14 +183,28 @@ function SidebarFooter({ onSignOut, user, onGoAdmin }) {
   )
 }
 
-function TreeNode({ node, depth, open, toggle, select, selected }) {
+function SharedSidebar({ tree, open, toggle, selected, mode, loading, onSelect, onToggleMode, onClose }) {
+  return (
+    <aside className="h-full min-h-0 flex flex-col border-r border-white/10 bg-zinc-950 overflow-hidden">
+      <div className="shrink-0 flex items-center gap-2 p-3 border-b border-white/10">
+        {onClose && <button className="p-1.5 rounded-full bg-white/10 hover:bg-white/20" onClick={onClose} aria-label="Close sidebar"><X className="w-4 h-4" /></button>}
+        <img src="/logo.svg" alt="Liquid Photos" className="w-5 h-5" />
+        <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
+      </div>
+      <SidebarTreeContent tree={tree} open={open} toggle={toggle} select={onSelect} selected={selected}
+        mode={mode} loading={loading} onToggleMode={onToggleMode} showRoot />
+    </aside>
+  )
+}
+
+function TreeNode({ node, depth, open, toggle, select, selected, showRoot = false }) {
   const isRoot = depth === 0
   const isOpen = open.has(node.path)
   const hasChildren = node.children && node.children.length > 0
   const pad = { paddingLeft: `${depth * 12 + (isRoot ? 0 : 8)}px` }
   return (
     <div>
-      {!isRoot && (
+      {(!isRoot || showRoot) && (
         <div
           className={`group flex items-center gap-2 select-none cursor-pointer rounded-lg mx-1 py-1.5 pr-2 ${selected === node.path ? 'bg-white/10 text-white' : 'hover:bg-white/5 text-slate-200'}`}
           style={pad}
@@ -524,7 +540,7 @@ export default function App() {
   // loader control
   const photoIdsRef = useRef(new Set())
   const requestKey = useMemo(() => isShareMode
-    ? `share::${shareToken}::${dateRange.from}-${dateRange.to}::${mediaFilter}`
+    ? `share::${shareToken}::${selected}::${treeMode}::${dateRange.from}-${dateRange.to}::${mediaFilter}`
     : `${user?.id || 0}::${selected}::${treeMode}::${dateRange.from}-${dateRange.to}::${mediaFilter}`
   ,[isShareMode, shareToken, user?.id, selected, treeMode, dateRange.from, dateRange.to, mediaFilter])
   const lastKeyRef = useRef(null)
@@ -539,6 +555,12 @@ export default function App() {
         try {
           const info = await API.shareInfo(shareToken)
           if (info?.token) setShareInfo(info)
+          const t = await API.shareTree(shareToken)
+          if (t?.path !== undefined) {
+            setTree(t)
+            setOpen(new Set([t.path]))
+            setSelected(t.path)
+          }
         } catch {}
         return
       }
@@ -609,6 +631,39 @@ export default function App() {
     })
   }, [])
 
+  const selectSharedTreeNode = useCallback((p) => {
+    if (treeMode === 'dates' && String(p).startsWith('date:')) {
+      const value = String(p).slice(5)
+      if (value.startsWith('D-')) {
+        const [y, m, d] = value.slice(2).split('-').map(Number)
+        setDateRange({ from: Date.UTC(y, m - 1, d), to: Date.UTC(y, m - 1, d + 1) })
+      } else if (value.startsWith('M-')) {
+        const [y, m] = value.slice(2).split('-').map(Number)
+        setDateRange({ from: Date.UTC(y, m - 1, 1), to: Date.UTC(y, m, 1) })
+      } else if (value.startsWith('Y-')) {
+        const y = Number(value.slice(2))
+        setDateRange({ from: Date.UTC(y, 0, 1), to: Date.UTC(y + 1, 0, 1) })
+      } else setDateRange({ from: 0, to: 0 })
+    } else setDateRange({ from: 0, to: 0 })
+    setSelected(p)
+    if (isSmall) setSidebarOpen(false)
+  }, [treeMode, isSmall])
+
+  const switchSharedTreeMode = useCallback(async (nextMode) => {
+    if (nextMode === treeMode) return
+    setTreeLoading(true)
+    try {
+      const t = await API.shareTree(shareToken, nextMode, mediaFilter)
+      if (t?.error || t?.path === undefined) throw new Error(t?.error || 'Failed to load tree')
+      setTreeMode(nextMode)
+      setTree(t)
+      setOpen(new Set([t.path]))
+      setSelected(t.path)
+      setDateRange({ from: 0, to: 0 })
+    } catch (e) { setError(e?.message || 'Failed to switch view mode') }
+    finally { setTreeLoading(false) }
+  }, [treeMode, shareToken, mediaFilter])
+
   // popover outside click
   useEffect(() => {
     if (!resizeOpen) return
@@ -662,6 +717,11 @@ export default function App() {
         let r
         if (isShareMode) {
           const params = { page, pageSize: 200, _t: Date.now(), filter: mediaFilter }
+          if (treeMode === 'folders' && selected) params.folder = selected
+          if (treeMode === 'dates' && dateRange.from && dateRange.to) {
+            params.from = dateRange.from
+            params.to = dateRange.to
+          }
           r = await API.sharePhotos(shareToken, params)
         } else {
           const params = (treeMode === 'dates' && String(selected).startsWith('date:'))
@@ -1014,8 +1074,12 @@ export default function App() {
       ) : (
         <div
           className="h-full min-h-0 grid"
-          style={{ gridTemplateColumns: (!isShareMode && !isSmall && sidebarOpen) ? `${Math.round(sidebarWidth)}px 1fr` : '1fr' }}
+          style={{ gridTemplateColumns: (!isSmall && sidebarOpen) ? `${Math.round(sidebarWidth)}px 1fr` : '1fr' }}
         >
+          {isShareMode && !isSmall && sidebarOpen && (
+            <SharedSidebar tree={tree} open={open} toggle={toggle} selected={selected} mode={treeMode}
+              loading={treeLoading} onSelect={selectSharedTreeNode} onToggleMode={switchSharedTreeMode} />
+          )}
                      {/* Desktop Sidebar */}
            {!isShareMode && !isSmall && sidebarOpen && (
              <aside className="relative h-full flex flex-col border-r border-white/10 bg-zinc-950 overflow-hidden">
@@ -1269,7 +1333,6 @@ export default function App() {
             <header className="relative z-20 p-3 border-b border-white/10 bg-zinc-950">
               <div className="flex items-center gap-3">
                 {/* Toggle */}
-                {!isShareMode && (
                 <button
                   className="inline-flex items-center justify-center p-2 rounded-full bg-white/10 border border-white/10 hover:bg-white/20"
                   onClick={() => setSidebarOpen(v => !v)}
@@ -1277,10 +1340,9 @@ export default function App() {
                 >
                   <Menu className="w-5 h-5 text-slate-200" />
                 </button>
-                )}
 
                 {/* Brand when sidebar closed (desktop) */}
-                {!isShareMode && !isSmall && !sidebarOpen && (
+                {!isSmall && !sidebarOpen && (
                   <div className="flex items-center gap-2">
                     <img src="/logo.svg" alt="Liquid Photos" className="w-5 h-5" />
                     <div className="text-sm font-semibold text-slate-100">Liquid Photos</div>
@@ -1699,6 +1761,16 @@ export default function App() {
       )}
 
       {/* Mobile sidebar drawer */}
+      {isShareMode && isSmall && sidebarOpen && (
+        <div className="fixed inset-0 z-50">
+          <button className="absolute inset-0 bg-black/60" onClick={() => setSidebarOpen(false)} aria-label="Close sidebar overlay" />
+          <div className="absolute inset-y-0 left-0 w-[82vw] max-w-[320px] shadow-xl">
+            <SharedSidebar tree={tree} open={open} toggle={toggle} selected={selected} mode={treeMode}
+              loading={treeLoading} onSelect={selectSharedTreeNode} onToggleMode={switchSharedTreeMode}
+              onClose={() => setSidebarOpen(false)} />
+          </div>
+        </div>
+      )}
       {!isShareMode && isSmall && sidebarOpen && (
         <div className="fixed inset-0 z-50">
           <button

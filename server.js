@@ -1321,10 +1321,8 @@ app.post('/api/shares', requireAuth, (req, res) => {
     if (relFolder && !relFolder.startsWith('date:')) {
       // Traditional folder-based sharing
       folder = scopeJoin(req.user.root_path || '', normalizeScopeInput(relFolder))
-      // Must be a prefix that exists in DB (optional check)
-      const lower = folder
-      const upper = folder + '\uFFFF'
-      const count = db.prepare('SELECT COUNT(1) as c FROM images WHERE folder >= ? AND folder < ?').get(lower, upper).c
+      const count = db.prepare('SELECT COUNT(1) as c FROM images WHERE folder = ? OR (folder >= ? AND folder < ?)')
+        .get(folder, `${folder}/`, `${folder}/\uFFFF`).c
       if (count === 0) return res.status(404).json({ error: 'folder is empty or not found' })
       
       name = String(req.body?.name || path.basename(folder) || 'Shared').trim()
@@ -1355,9 +1353,8 @@ app.post('/api/shares', requireAuth, (req, res) => {
     if (ids.length > 0) {
       if (relFolder && !relFolder.startsWith('date:')) {
         // Only allow ids within the folder scope for folder-based shares
-        const lower = folder
-        const upper = folder + '\uFFFF'
-        const rows = db.prepare(`SELECT id FROM images WHERE id IN (${ids.map(()=>'?').join(',')}) AND folder >= ? AND folder < ?`).all(...ids, lower, upper)
+        const rows = db.prepare(`SELECT id FROM images WHERE id IN (${ids.map(()=>'?').join(',')}) AND (folder = ? OR (folder >= ? AND folder < ?))`)
+          .all(...ids, folder, `${folder}/`, `${folder}/\uFFFF`)
         const allowed = new Set(rows.map(r => r.id))
         for (const id of ids) {
           if (allowed.has(id)) insertShareItem.run(shareId, id)
@@ -1365,14 +1362,20 @@ app.post('/api/shares', requireAuth, (req, res) => {
       } else {
         // For selected-only shares, verify ids are within user's scope
         const userScope = req.user.root_path || ''
-        const lower = userScope
-        const upper = userScope + '\uFFFF'
-        const rows = db.prepare(`SELECT id FROM images WHERE id IN (${ids.map(()=>'?').join(',')}) AND folder >= ? AND folder < ?`).all(...ids, lower, upper)
+        const rows = userScope
+          ? db.prepare(`SELECT id FROM images WHERE id IN (${ids.map(()=>'?').join(',')}) AND (folder = ? OR (folder >= ? AND folder < ?))`)
+            .all(...ids, userScope, `${userScope}/`, `${userScope}/\uFFFF`)
+          : db.prepare(`SELECT id FROM images WHERE id IN (${ids.map(()=>'?').join(',')})`).all(...ids)
         const allowed = new Set(rows.map(r => r.id))
         for (const id of ids) {
           if (allowed.has(id)) insertShareItem.run(shareId, id)
         }
       }
+    }
+
+    if (ids.length > 0 && countShareItems.get(shareId).c === 0) {
+      deleteShareStmt.run(shareId)
+      return res.status(400).json({ error: 'no shareable photos selected' })
     }
 
     const urlPath = `/s/${token}`
@@ -1423,21 +1426,71 @@ function getShare(req, res) {
   return share
 }
 
+// Every public browse query is restricted to the exact set of shared images.
+function shareWhere(share, filter = 'all') {
+  const kind = filter === 'images' ? " AND i.kind = 'image'" : filter === 'videos' ? " AND i.kind = 'video'" : ''
+  if (share.folder === 'selected' || countShareItems.get(share.id).c > 0) {
+    return { from: 'images i JOIN share_items si ON si.image_id = i.id', where: `si.share_id = ?${kind}`, args: [share.id] }
+  }
+  return {
+    from: 'images i',
+    where: `(i.folder = ? OR (i.folder >= ? AND i.folder < ?))${kind}`,
+    args: [share.folder, `${share.folder}/`, `${share.folder}/\uFFFF`]
+  }
+}
+
+app.get('/s/:token/tree', (req, res) => {
+  try {
+    const share = getShare(req, res); if (!share) return
+    const mode = String(req.query.mode || 'folders')
+    const { from, where, args } = shareWhere(share, String(req.query.filter || 'all'))
+    if (mode === 'dates') {
+      const rows = db.prepare(`SELECT CAST(strftime('%Y', i.mtime/1000, 'unixepoch') AS INTEGER) y,
+        CAST(strftime('%m', i.mtime/1000, 'unixepoch') AS INTEGER) m,
+        CAST(strftime('%d', i.mtime/1000, 'unixepoch') AS INTEGER) d, COUNT(*) c
+        FROM ${from} WHERE ${where} GROUP BY y, m, d ORDER BY y DESC, m DESC, d DESC`).all(...args)
+      const root = { name: 'Dates', path: 'date:', count: 0, children: [] }
+      for (const row of rows) {
+        if (!Number.isFinite(row.y) || !Number.isFinite(row.m) || !Number.isFinite(row.d)) continue
+        let year = root.children.find(n => n.path === `date:Y-${row.y}`)
+        if (!year) { year = { name: String(row.y), path: `date:Y-${row.y}`, count: 0, children: [] }; root.children.push(year) }
+        const monthPath = `date:M-${row.y}-${String(row.m).padStart(2, '0')}`
+        let month = year.children.find(n => n.path === monthPath)
+        if (!month) {
+          month = { name: new Date(Date.UTC(row.y, row.m - 1, 1)).toLocaleString('en-US', { month: 'long', timeZone: 'UTC' }), path: monthPath, count: 0, children: [] }
+          year.children.push(month)
+        }
+        const day = new Date(Date.UTC(row.y, row.m - 1, row.d))
+        month.children.push({ name: `${day.toLocaleString('en-US', { weekday: 'short', timeZone: 'UTC' })}, ${row.d}`, path: `date:D-${row.y}-${String(row.m).padStart(2, '0')}-${String(row.d).padStart(2, '0')}`, count: row.c, children: [] })
+        month.count += row.c; year.count += row.c; root.count += row.c
+      }
+      return res.json(root)
+    }
+    const root = { name: share.folder === 'selected' ? 'Selected photos' : (share.folder.split('/').filter(Boolean).at(-1) || 'Shared photos'), path: '', count: 0, children: [] }
+    const folders = db.prepare(`SELECT i.folder, COUNT(*) c FROM ${from} WHERE ${where} GROUP BY i.folder ORDER BY i.folder`).all(...args)
+    for (const row of folders) {
+      root.count += row.c
+      const relative = share.folder === 'selected' ? row.folder : (row.folder === share.folder ? '' : row.folder.slice(share.folder.length + 1))
+      let parent = root, current = ''
+      for (const part of relative.split('/').filter(Boolean)) {
+        current = current ? `${current}/${part}` : part
+        let child = parent.children.find(n => n.path === current)
+        if (!child) { child = { name: part, path: current, count: 0, children: [] }; parent.children.push(child) }
+        child.count += row.c
+        parent = child
+      }
+    }
+    res.json(root)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 // Public info
 app.get('/s/:token/info', (req, res) => {
   try {
     const share = getShare(req, res); if (!share) return
     const selectedCount = countShareItems.get(share.id).c
-    let total
-    if (share.folder === 'selected' || selectedCount > 0) {
-      // Selected-only share
-      total = selectedCount
-    } else {
-      // Folder-based share
-      const lower = share.folder
-      const upper = lower + '\uFFFF'
-      total = db.prepare('SELECT COUNT(1) as c FROM images WHERE folder >= ? AND folder < ?').get(lower, upper).c
-    }
+    const scope = shareWhere(share)
+    const total = db.prepare(`SELECT COUNT(*) c FROM ${scope.from} WHERE ${scope.where}`).get(...scope.args).c
     res.json({ token: share.token, name: share.name, folder: share.folder, created_at: share.created_at, total, selected: selectedCount > 0 })
   } catch (e) {
     res.status(500).json({ error: e.message })
@@ -1452,38 +1505,23 @@ app.get('/s/:token/photos', (req, res) => {
     const pageSize = Math.max(1, Math.min(500, parseInt(req.query.pageSize || '200', 10)))
     const offset = (page - 1) * pageSize
     const filter = (req.query.filter || 'all').toString()
-    let kindWhere = ''
-    if (filter === 'images') kindWhere = " AND kind = 'image'"
-    else if (filter === 'videos') kindWhere = " AND kind = 'video'"
-
-    const selectedCount = countShareItems.get(share.id).c
-    let rows, total
-    if (share.folder === 'selected' || selectedCount > 0) {
-      // Selected-only share
-      rows = db.prepare(`
-        SELECT i.id, i.fname, i.folder, i.mtime, i.size, i.kind, i.duration
-        FROM images i
-        JOIN share_items si ON si.image_id = i.id
-        WHERE si.share_id = ?${kindWhere}
-        ORDER BY i.mtime DESC, i.id DESC
-        LIMIT ? OFFSET ?
-      `).all(share.id, pageSize, offset)
-      total = selectedCount
-    } else {
-      // Folder-based share
-      const lower = share.folder
-      const upper = lower + '\uFFFF'
-      rows = db.prepare(`
-        SELECT id, fname, folder, mtime, size, kind, duration
-        FROM images
-        WHERE folder >= ? AND folder < ?${kindWhere}
-        ORDER BY mtime DESC, id DESC
-        LIMIT ? OFFSET ?
-      `).all(lower, upper, pageSize, offset)
-      total = db.prepare(`
-        SELECT COUNT(1) as c FROM images WHERE folder >= ? AND folder < ?${kindWhere}
-      `).get(lower, upper).c
+    const scope = shareWhere(share, filter)
+    let where = scope.where
+    const args = [...scope.args]
+    if (Object.prototype.hasOwnProperty.call(req.query, 'folder')) {
+      const relative = String(req.query.folder || '')
+      if (relative.startsWith('/') || relative.split('/').some(p => p === '..' || p === '.')) return res.status(400).json({ error: 'invalid folder' })
+      const folder = share.folder === 'selected' ? relative : (relative ? `${share.folder}/${relative}` : share.folder)
+      where += ' AND (i.folder = ? OR (i.folder >= ? AND i.folder < ?))'
+      args.push(folder, `${folder}/`, `${folder}/\uFFFF`)
     }
+    if (Object.prototype.hasOwnProperty.call(req.query, 'from') && Object.prototype.hasOwnProperty.call(req.query, 'to')) {
+      where += ' AND i.mtime >= ? AND i.mtime < ?'
+      args.push(Number(req.query.from), Number(req.query.to))
+    }
+    const rows = db.prepare(`SELECT i.id, i.fname, i.folder, i.mtime, i.size, i.kind, i.duration
+      FROM ${scope.from} WHERE ${where} ORDER BY i.mtime DESC, i.id DESC LIMIT ? OFFSET ?`).all(...args, pageSize, offset)
+    const total = db.prepare(`SELECT COUNT(*) c FROM ${scope.from} WHERE ${where}`).get(...args).c
     res.json({ items: rows, total })
   } catch (e) {
     res.status(500).json({ error: e.message })
@@ -1500,9 +1538,7 @@ function assertShareOwnsId(share, id) {
     if (!owns) return null
   } else {
     // Folder-based share - check if image is within the folder scope
-    const lower = share.folder
-    const upper = lower + '\uFFFF'
-    if (!(row.folder >= lower && row.folder < upper)) return null
+    if (row.folder !== share.folder && !row.folder.startsWith(`${share.folder}/`)) return null
   }
   return row
 }
