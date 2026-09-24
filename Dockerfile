@@ -1,5 +1,5 @@
 # ---------- Build stage ----------
-FROM node:20-bookworm-slim AS build
+FROM --platform=$BUILDPLATFORM node:20-bookworm-slim AS build
 WORKDIR /app
 
 # System deps for native modules (better-sqlite3, etc.) and HEIC support for Sharp
@@ -42,4 +42,3 @@ EXPOSE 6363
 
 # Run!
 CMD ["node", "server.js"]
-    
